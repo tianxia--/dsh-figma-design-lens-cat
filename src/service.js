@@ -13,12 +13,13 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { lensHome } from "./store/home.mjs";
 import { execFileSync } from "node:child_process";
 
 export const LABEL = "com.dsh-figma-design-lens-cat.server";
 
 const plistPath = () => path.join(os.homedir(), "Library", "LaunchAgents", LABEL + ".plist");
-const logDir = () => path.join(os.homedir(), ".dsh-figma-design-lens-cat", "logs");
+const logDir = () => path.join(lensHome(), "logs");
 const isMac = () => process.platform === "darwin";
 const domain = () => "gui/" + process.getuid();
 

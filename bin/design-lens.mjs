@@ -125,7 +125,8 @@ const main = async () => {
   // the tool were broken.
   if (cmd === "stale") {
     const { staleness } = await import("../src/ir/staleness.mjs");
-    const root = path.join(os.homedir(), ".dsh-figma-design-lens-cat", "projects");
+    const { lensHome } = await import("../src/store/home.mjs");
+    const root = path.join(lensHome(), "projects");
     if (!fs.existsSync(root)) { console.log("no projects yet"); return; }
     let total = 0;
     const rows = [];

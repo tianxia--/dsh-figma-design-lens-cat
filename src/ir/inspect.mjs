@@ -7,11 +7,11 @@
 // contents first costs one API call and avoids that entirely.
 import { resolveToken, ingestNodes } from "../figma/client.js";
 import { splitCanvas } from "./split-canvas.mjs";
+import { lensHome } from "../store/home.mjs";
 import path from "node:path";
 import os from "node:os";
 
-const WORK = process.env.DESIGN_LENS_WORK
-  || path.join(os.homedir(), ".dsh-figma-design-lens-cat", "work");
+const WORK = process.env.DESIGN_LENS_WORK || path.join(lensHome(), "work");
 
 function parseLink(url) {
   const file = /\/(?:file|design)\/([A-Za-z0-9]+)/.exec(url || "");
