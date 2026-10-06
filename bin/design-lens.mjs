@@ -120,6 +120,43 @@ const main = async () => {
     return;
   }
 
+  // Wire this tool into the agents that will call it. Editing each client's
+  // config by hand means editing JSON by hand, and a trailing comma there
+  // takes down the editor's whole configuration.
+  if (cmd === "install") {
+    const { install, detect } = await import("../src/mcp/install.mjs");
+    const which = args[1];
+
+    if (!which) {
+      console.log("Clients found on this machine:");
+      for (const c of detect()) {
+        console.log("  " + (c.present ? "found  " : "absent ") + c.key.padEnd(16) + c.label);
+      }
+      console.log();
+      console.log("Install into one:  dsh-figma-design-lens-cat install <client>");
+      console.log("Or into all found: dsh-figma-design-lens-cat install all");
+      return;
+    }
+
+    const targets = which === "all"
+      ? detect().filter((c) => c.present).map((c) => c.key)
+      : [which];
+    if (!targets.length) {
+      console.log("No supported client found. Install one, or add this by hand:");
+      console.log('  { "command": "dsh-figma-design-lens-cat-mcp" }');
+      return;
+    }
+    for (const t of targets) {
+      const r = install(t);
+      console.log((r.ok ? r.action : "skipped") + "  " + r.label
+        + (r.ok ? "" : " -- " + r.why));
+      console.log("    " + r.file);
+    }
+    console.log();
+    console.log("Restart the client for it to pick this up.");
+    return;
+  }
+
   // Which stored analyses predate the current pipeline. A screen analysed
   // before the paint list existed renders from nothing and scores as though
   // the tool were broken.

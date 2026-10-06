@@ -94,6 +94,21 @@ metrics however exactly it is positioned.
 
 ## MCP server
 
+```bash
+# See which clients are on this machine
+dsh-figma-design-lens-cat install
+
+# Wire it into one, or all of them
+dsh-figma-design-lens-cat install claude
+dsh-figma-design-lens-cat install all
+```
+
+Claude Code, Claude Desktop, Cursor and Codex are written directly; the rest
+of each config is left as it was, and a file that does not parse is reported
+rather than replaced. Restart the client afterwards.
+
+By hand, if you prefer:
+
 ```json
 {
   "mcpServers": {
@@ -104,6 +119,15 @@ metrics however exactly it is positioned.
 
 Tools: `analyse_screen`, `list_projects`, `screen_report`,
 `implementation_brief`.
+
+Everything the MCP server does is also a command, so an agent without MCP can
+call the CLI instead:
+
+```bash
+dsh-figma-design-lens-cat add '<figma link>'   # analyse a screen
+dsh-figma-design-lens-cat projects             # what has been analysed
+dsh-figma-design-lens-cat screens <project>    # the screens in one
+```
 
 ## Commands
 
