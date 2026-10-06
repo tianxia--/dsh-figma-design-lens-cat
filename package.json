@@ -1,11 +1,18 @@
 {
   "name": "dsh-figma-design-lens-cat",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Figma design understanding for AI coding agents: extracts components, exports assets, cross-checks recognition with vision models, and scores how ready a screen is to implement. Ships an MCP server and a local review UI.",
   "type": "module",
   "license": "MIT",
   "author": "",
-  "homepage": "https://www.npmjs.com/package/dsh-figma-design-lens-cat",
+  "homepage": "https://github.com/tianxia--/dsh-figma-design-lens-cat#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tianxia--/dsh-figma-design-lens-cat.git"
+  },
+  "bugs": {
+    "url": "https://github.com/tianxia--/dsh-figma-design-lens-cat/issues"
+  },
   "keywords": [
     "figma",
     "mcp",
