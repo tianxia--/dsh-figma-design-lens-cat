@@ -1,0 +1,54 @@
+{
+  "name": "dsh-figma-design-lens-cat",
+  "version": "1.0.0",
+  "description": "Figma design understanding for AI coding agents: extracts components, exports assets, cross-checks recognition with vision models, and scores how ready a screen is to implement. Ships an MCP server and a local review UI.",
+  "type": "module",
+  "license": "MIT",
+  "author": "",
+  "homepage": "https://www.npmjs.com/package/dsh-figma-design-lens-cat",
+  "keywords": [
+    "figma",
+    "mcp",
+    "model-context-protocol",
+    "design-to-code",
+    "ai-agent",
+    "claude",
+    "codex",
+    "design-system",
+    "ui-analysis"
+  ],
+  "bin": {
+    "dsh-figma-design-lens-cat": "bin/design-lens.mjs",
+    "dlc": "bin/design-lens.mjs",
+    "dsh-figma-design-lens-cat-mcp": "bin/mcp.mjs"
+  },
+  "exports": {
+    ".": "./src/index.js",
+    "./mcp": "./src/mcp/server.mjs",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "bin",
+    "src",
+    "python",
+    "docs",
+    "!docs/images",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node bin/design-lens.mjs serve",
+    "mcp": "node bin/mcp.mjs",
+    "test": "node test/smoke.mjs",
+    "doctor": "node bin/design-lens.mjs doctor"
+  },
+  "optionalDependencies": {
+    "@earendil-works/pi-ai": "^0.85.1"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
