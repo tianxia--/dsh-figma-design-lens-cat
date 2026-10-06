@@ -117,8 +117,9 @@ By hand, if you prefer:
 }
 ```
 
-Tools: `analyse_screen`, `list_projects`, `screen_report`,
-`implementation_brief`.
+Eight tools: `analyze_design`, `list_projects`, `list_screens`,
+`get_screen`, `get_implementation_spec`, `get_components`, `get_assets`,
+`open_review`.
 
 Everything the MCP server does is also a command, so an agent without MCP can
 call the CLI instead:
