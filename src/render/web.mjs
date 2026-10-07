@@ -28,7 +28,9 @@ function esc(s) {
 // and illustrations have no fill or text to recreate -- so the render must
 // place the exported file rather than draw nothing.
 export function loadBackgrounds(latest) {
-  const file = path.join(latest, "raw", "bg-assets.json");
+  const file = fs.existsSync(path.join(latest, "raw", "assets.json"))
+    ? path.join(latest, "raw", "assets.json")
+    : path.join(latest, "raw", "bg-assets.json");
   if (!fs.existsSync(file)) return [];
   try {
     const data = JSON.parse(fs.readFileSync(file, "utf8"));

@@ -160,7 +160,10 @@ export function buildPayload(latest) {
   // approximating an icon with a coloured rectangle.
   let artwork = [];
   try {
-    const bg = JSON.parse(fs.readFileSync(path.join(latest, "raw", "bg-assets.json"), "utf8"));
+    const assetFile = fs.existsSync(path.join(latest, "raw", "assets.json"))
+      ? path.join(latest, "raw", "assets.json")
+      : path.join(latest, "raw", "bg-assets.json");
+    const bg = JSON.parse(fs.readFileSync(assetFile, "utf8"));
     artwork = (bg.groups || [])
       .filter((g) => g && g.box && g.file)
       .map((g) => {

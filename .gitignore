@@ -4,3 +4,4 @@ node_modules/
 .design-lens/
 __pycache__/
 *.pyc
+*.tgz

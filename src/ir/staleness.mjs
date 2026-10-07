@@ -20,9 +20,9 @@ const REQUIRED = [
   ["raw/paint.json",
     "the paint list, which is what the model is given; without it a render"
     + " falls back to the component inventory and loses most of the screen"],
-  ["raw/bg-assets.json",
-    "the export manifest, without which vectors and photos are rebuilt as"
-    + " coloured rectangles"],
+  ["raw/assets.json",
+    "the asset manifest, without which vectors, photos and exported artwork"
+    + " are harder for agents to trace back to Figma nodes"],
   ["manifest.json", "the screen's own size and name"],
 ];
 
@@ -33,7 +33,12 @@ export function staleness(latest) {
   for (const [rel, why] of REQUIRED) {
     if (!fs.existsSync(path.join(latest, rel))) missing.push({ file: rel, why });
   }
-  return { missing, absent: false };
+  // Back-compat: analyses produced just before raw/assets.json existed still
+  // carry raw/bg-assets.json with the same exported file evidence. Treat them
+  // as usable but stale only when neither manifest exists.
+  const hasBgAssets = fs.existsSync(path.join(latest, "raw/bg-assets.json"));
+  const filtered = hasBgAssets ? missing.filter((m) => m.file !== "raw/assets.json") : missing;
+  return { missing: filtered, absent: false };
 }
 
 /** One line a person can act on, or null when the analysis is current. */

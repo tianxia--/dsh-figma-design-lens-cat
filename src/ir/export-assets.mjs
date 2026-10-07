@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-// Export detected background groups as real PNGs through the Figma images API.
+// Export every clear image/vector asset candidate through the Figma images API.
 //
-// Detection alone leaves the developer to hunt the layer in Figma. Exporting at
-// the node's own bounds produces the asset the design intends — the very image
-// the reviewer pulled by hand to ask "isn't there a background picture?".
+// Asset export is intentionally structural, not detector-gated: if Figma says a
+// node is an image fill, vector, boolean artwork, rotated shape, or graphical
+// background group, the analysis downloads it before any vision model decides
+// what the pixels depict.
 import fs from "node:fs";
 import path from "node:path";
 import { resolveToken } from "../figma/client.js";
@@ -74,8 +75,25 @@ const main = async () => {
     console.log("  exported " + file + "  " + g.name + "  " + Math.round(g.box.w) + "x" + Math.round(g.box.h)
       + "  (" + g.parts + " shapes)");
   }
+  const assetManifest = {
+    note: "All clear image/vector asset candidates exported during analysis at designer bounds (scale=2). Use these files directly rather than guessing or redrawing their pixels.",
+    groups: manifest,
+    assets: manifest.map((g) => ({
+      id: g.id,
+      name: g.name,
+      kind: g.kind || (g.hasImageFill ? "image-fill" : "graphic-group"),
+      reason: g.reason,
+      file: g.file,
+      box: g.box,
+      rendered: g.rendered,
+      pixels: g.pixels,
+      contains: g.contains || [g.id],
+    })),
+  };
   fs.writeFileSync(path.join(dir, base + ".bg-assets.json"),
-    JSON.stringify({ note: "Background assets made of pure shape groups, exported as PNG at the designer bounds (scale=2). Use these images directly rather than recreating the shapes.", groups: manifest }, null, 1));
+    JSON.stringify(assetManifest, null, 1));
+  fs.writeFileSync(path.join(dir, base + ".assets.json"),
+    JSON.stringify(assetManifest, null, 1));
   console.log("manifest: " + path.join(dir, base + ".bg-assets.json"));
 };
 main().catch((e) => { console.error("export failed:", e.message); process.exit(1); });

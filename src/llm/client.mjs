@@ -7,7 +7,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { fileURLToPath } from "node:url";
 import { lensHome } from "../store/home.mjs";
+import { Settings } from "../store/settings.js";
 
 export function storeDir() {
   return lensHome();
@@ -26,12 +28,71 @@ export function isAuthorised(provider = "anthropic") {
   }
 }
 
+// The providers a user can sign in to with a subscription they already have,
+// and the model each one generates with unless settings say otherwise.
+// Generation used to name anthropic everywhere, so a user signed in to
+// Codex or Copilot was treated as signed out and silently got the template.
+export const PROVIDERS = [
+  { id: "anthropic", label: "Claude (Claude Pro / Max subscription)", model: "claude-sonnet-4-5" },
+  { id: "openai-codex", label: "ChatGPT (Plus / Pro subscription, via Codex)", model: "gpt-5.5" },
+  { id: "github-copilot", label: "GitHub Copilot", model: "claude-sonnet-4.6" },
+];
+
+export function defaultModel(provider) {
+  const p = PROVIDERS.find((x) => x.id === provider);
+  return p ? p.model : undefined;
+}
+
+/** Is the optional SDK on disk? Checked without importing it. */
+export function sdkInstalled() {
+  let dir = path.dirname(fileURLToPath(import.meta.url));
+  for (;;) {
+    if (fs.existsSync(path.join(dir, "node_modules", "@earendil-works", "pi-ai", "package.json"))) {
+      return true;
+    }
+    const up = path.dirname(dir);
+    if (up === dir) return false;
+    dir = up;
+  }
+}
+
+function readSettings() {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(storeDir(), "settings.json"), "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Whether renders can use a model, which one, and if not, why not.
+ *
+ * One answer for every caller: setup, doctor, the CLI and the renderer all
+ * read this, so the reason a render used the template is the same sentence
+ * the user was shown when they set the tool up.
+ */
+export function llmState() {
+  const s = readSettings();
+  if (!sdkInstalled()) {
+    return { ready: false, reason: "sdk", provider: null, model: null,
+      message: "the LLM package (@earendil-works/pi-ai) is not installed" };
+  }
+  const chosen = s.llmProvider && isAuthorised(s.llmProvider) ? s.llmProvider : null;
+  const provider = chosen || (PROVIDERS.find((p) => isAuthorised(p.id)) || {}).id || null;
+  if (!provider) {
+    return { ready: false, reason: "login", provider: s.llmProvider || null, model: null,
+      message: "no model is connected" };
+  }
+  const model = (s.llmProvider === provider && s.llmModel) || defaultModel(provider);
+  return { ready: true, reason: null, provider, model, message: provider + " / " + model };
+}
+
 async function loadSdk() {
   try {
     return await import("@earendil-works/pi-ai");
   } catch {
     throw new Error(
-      "LLM support needs an optional package: npm install @earendil-works/pi-ai");
+      "LLM support needs an optional package that is not installed; run: dsh-figma-design-lens-cat setup");
   }
 }
 
@@ -99,14 +160,48 @@ async function models() {
   return builtinModels({ credentials: fileCredentialStore(authFile()) });
 }
 
-/** Run the provider's OAuth flow and persist the credential. */
+/**
+ * Run the provider's OAuth flow and persist the credential.
+ * io.signal cancels it: the flow listens on a fixed local port for the
+ * browser's redirect, and a login abandoned without cancelling keeps that
+ * port bound, so the next attempt fails until the process exits.
+ */
 export async function login(provider, io) {
   const m = await models();
   await m.login(provider, "oauth", {
     prompt: async (p) => io.prompt(p),
     notify: (e) => io.notify(e),
+    ...(io.signal ? { signal: io.signal } : {}),
   });
   return { ok: true, provider, stored: authFile() };
+}
+
+/** Make a provider the one renders use, keeping a model chosen for it before. */
+export function chooseProvider(provider) {
+  if (!PROVIDERS.some((p) => p.id === provider)) throw new Error("unknown provider: " + provider);
+  const settings = new Settings(storeDir());
+  const s = settings.read();
+  const model = (s.llmProvider === provider && s.llmModel) || defaultModel(provider);
+  settings.write({ llmProvider: provider, llmModel: model });
+  return { provider, model };
+}
+
+/**
+ * Does a stored login still work? One tiny request with the model renders use.
+ * Presence of a credential is not the same as a working one: an expired
+ * refresh token sat in the file for days while status said "ok".
+ */
+export async function checkProvider(provider) {
+  if (!isAuthorised(provider)) return { state: "signed-out" };
+  const cur = llmState();
+  const model = cur.provider === provider && cur.model ? cur.model : defaultModel(provider);
+  try {
+    await complete({ provider, model, system: "Reply with one word.", prompt: "ok", maxTokens: 5 });
+    return { state: "ok", model };
+  } catch (e) {
+    const detail = String(e.message || e).slice(0, 200);
+    return { state: /expired|invalid_grant/i.test(detail) ? "expired" : "error", model, detail };
+  }
 }
 
 export async function logout(provider) {

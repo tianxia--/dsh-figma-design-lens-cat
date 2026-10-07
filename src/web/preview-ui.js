@@ -82,6 +82,7 @@ export function previewScript(t, project, screen, rel) {
     components: t("preview.components"), failing: t("preview.failing"),
     worst: t("preview.worst"), run: t("preview.run"),
     fontMissing: t("preview.fontMissing"), fontNote: t("preview.fontNote"),
+    template: t("preview.template"), templateNote: t("preview.templateNote"),
   };
   return "<script>(function(){\n"
     + "var L=" + JSON.stringify(L) + ",PROJ=" + JSON.stringify(project)
@@ -108,7 +109,7 @@ if(fab&&drawer){
     };
   });
 
-  function renderResult(p,f,fonts){
+  function renderResult(p,f,fonts,by,why){
     var el=document.querySelector('[data-body="'+p+'"]');
     if(!el)return;
     var png='/files/projects/'+PROJ+'/render/'+p+'/'+SCR+'/render.png?t='+Date.now();
@@ -121,6 +122,11 @@ if(fab&&drawer){
       +'<span><b>'+esc(L.colour)+'</b> '+(ax.colour==null?'—':ax.colour+'%')+'</span>'
       +'<span>'+f.components+' '+esc(L.components)+'</span>'
       +'<span>'+f.failing+' '+esc(L.failing)+'</span></div>';
+    if(by==='template'){
+      h+='<div class="pv-warn"><b>'+esc(L.template)+'</b>'
+        +(why?': '+esc(why):'')
+        +'<div class="muted">'+esc(L.templateNote)+'</div></div>';
+    }
     if(fonts&&fonts.length){
       h+='<div class="pv-warn"><b>'+esc(L.fontMissing)+'</b>: '
         +fonts.map(function(x){return esc(x.family)}).join(', ')
@@ -141,7 +147,7 @@ if(fab&&drawer){
     if(st.status==='running'){dot(p,'run');status(p,L.running);}
     else if(st.status==='done'){dot(p,'ok');
       status(p,st.ms?(st.ms/1000).toFixed(1)+'s':'');
-      if(st.fidelity)renderResult(p,st.fidelity,st.missingFonts);}
+      if(st.fidelity)renderResult(p,st.fidelity,st.missingFonts,st.by,st.fellBackBecause);}
     else if(st.status==='failed'){dot(p,'bad');status(p,L.failed+': '+(st.error||''));}
     else{dot(p,'');status(p,L.pending);}
   }
@@ -164,7 +170,7 @@ if(fab&&drawer){
       var d=JSON.parse(e.data);
       if(d.phase==='start')apply(d.platform,{status:'running'});
       else if(d.phase==='log')status(d.platform,d.line);
-      else if(d.phase==='done')apply(d.platform,{status:'done',fidelity:d.fidelity,ms:d.ms,missingFonts:d.missingFonts});
+      else if(d.phase==='done')apply(d.platform,{status:'done',fidelity:d.fidelity,ms:d.ms,missingFonts:d.missingFonts,by:d.by,fellBackBecause:d.fellBackBecause});
       else if(d.phase==='failed')apply(d.platform,{status:'failed',error:d.error});
     });
     es.addEventListener('end',function(){es.close();stream=null;busy(false);});

@@ -19,6 +19,7 @@ import { JobQueue } from "../store/jobs.js";
 import { shell, esc, axes, verdictPill } from "./layout.js";
 import { pickLang, translator, verdictKey, renderBlocker } from "../i18n/strings.js";
 import { previewCard, previewScript } from "./preview-ui.js";
+import { settingsCards, settingsScript } from "./settings-ui.js";
 
 const MIME = { ".html": "text/html; charset=utf-8", ".json": "application/json; charset=utf-8",
   ".png": "image/png", ".md": "text/markdown; charset=utf-8" };
@@ -115,6 +116,81 @@ export function createServer(root, opts = {}) {
         const me = await r.json();
         return json({ ok: true, message: me.email || me.handle || "connected" });
       }
+
+      // The environment check: the same list as `doctor` in a terminal.
+      if (p === "/api/doctor" && req.method === "GET") {
+        const { doctorChecks, doctorOk } = await import("../env/doctor.mjs");
+        const checks = doctorChecks();
+        return json({ checks, ok: doctorOk(checks) });
+      }
+
+      // Model sign-in. The server listens on every interface, so these are
+      // limited to this machine: they start OAuth flows, store credentials
+      // and run npm. Sign-in has to happen here anyway -- the provider
+      // redirects to localhost. POSTs must be JSON, which a page on another
+      // site cannot send without a preflight this server never answers.
+      if (p === "/api/llm" || p.startsWith("/api/llm/")) {
+        const a = req.socket.remoteAddress || "";
+        if (!(a === "127.0.0.1" || a === "::1" || a === "::ffff:127.0.0.1")) {
+          return json({ error: "model sign-in is only available from this machine" }, 403);
+        }
+        if (req.method === "POST" && !/application\/json/i.test(req.headers["content-type"] || "")) {
+          return json({ error: "expected application/json" }, 415);
+        }
+        const client = await import("../llm/client.mjs");
+        const LL = await import("./llm-login.mjs");
+        const known = (pv) => LL.WEB_PROVIDERS.includes(pv);
+
+        if (p === "/api/llm" && req.method === "GET") {
+          const st = client.llmState();
+          return json({
+            sdk: client.sdkInstalled(), state: st,
+            providers: LL.WEB_PROVIDERS.map((id) => ({
+              id, signedIn: client.isAuthorised(id), active: st.ready && st.provider === id,
+              model: st.provider === id && st.model ? st.model : client.defaultModel(id),
+            })),
+            login: LL.view(LL.running("login")), install: LL.view(LL.running("install")),
+          });
+        }
+        if (p === "/api/llm/install" && req.method === "POST") {
+          return json(LL.view(LL.startInstall(REPO)));
+        }
+        if (p === "/api/llm/login" && req.method === "POST") {
+          const b = await readBody();
+          if (!known(b.provider)) return json({ error: "unknown provider" }, 400);
+          try { return json(LL.view(LL.startLogin(b.provider))); }
+          catch (e) { return json({ error: e.message }, 400); }
+        }
+        const sm = p.match(/^\/api\/llm\/session\/([A-Za-z0-9-]+)(?:\/(input|cancel))?$/);
+        if (sm) {
+          const s = LL.get(sm[1]);
+          if (!s) return json({ error: "no such session" }, 404);
+          if (!sm[2] && req.method === "GET") return json(LL.view(s));
+          if (sm[2] === "input" && req.method === "POST") {
+            const b = await readBody();
+            return json({ ok: LL.answer(s.id, b.value) });
+          }
+          if (sm[2] === "cancel" && req.method === "POST") return json({ ok: LL.cancel(s.id) });
+        }
+        if (p === "/api/llm/test" && req.method === "POST") {
+          const b = await readBody();
+          if (!known(b.provider)) return json({ error: "unknown provider" }, 400);
+          return json(await client.checkProvider(b.provider));
+        }
+        if (p === "/api/llm/use" && req.method === "POST") {
+          const b = await readBody();
+          if (!known(b.provider)) return json({ error: "unknown provider" }, 400);
+          if (!client.isAuthorised(b.provider)) return json({ error: "not signed in" }, 400);
+          return json(client.chooseProvider(b.provider));
+        }
+        if (p === "/api/llm/logout" && req.method === "POST") {
+          const b = await readBody();
+          if (!known(b.provider)) return json({ error: "unknown provider" }, 400);
+          try { await client.logout(b.provider); return json({ ok: true }); }
+          catch (e) { return json({ error: e.message }, 500); }
+        }
+        return json({ error: "not found" }, 404);
+      }
       if (p === "/api/analyze" && req.method === "POST") {
         const b = await readBody();
         if (!b.url || !/node-id=/.test(b.url)) return json({ error: t("error.needNodeId") }, 400);
@@ -174,6 +250,11 @@ export function createServer(root, opts = {}) {
                 // What the conversion could not reproduce, so the user can
                 // see which part of a partly-accurate render to check.
                 slot.losses = ev.losses || [];
+                // Which generator drew it, and why not the model if it was
+                // the template: a template render scores far lower, and the
+                // user must be able to tell that apart from a bad model run.
+                slot.by = ev.by || "template";
+                slot.fellBackBecause = ev.fellBackBecause || null;
               }
               if (ev.phase === "failed") { slot.status = "failed"; slot.error = ev.error; }
             }
@@ -545,7 +626,9 @@ export function createServer(root, opts = {}) {
           "  var r=await (await fetch('/api/settings/test',{method:'POST'})).json();",
           "  msg.textContent=r.message; msg.style.color=r.ok?'var(--ok)':'var(--bad)'; if(window.__lensToast)window.__lensToast(r.message);",
           "};",
-          "</scr\u0069pt>"].join("\n");
+          "</scr\u0069pt>",
+          settingsCards(t),
+          settingsScript(t)].join("\n");
         return page({ active: "settings", title: t("settings.title"), crumb: t("settings.subtitle"),
           back: { href: "/", label: t("nav.home"), home: false } }, body);
       }

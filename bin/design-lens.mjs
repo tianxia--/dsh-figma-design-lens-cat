@@ -17,6 +17,7 @@ import { Settings } from "../src/store/settings.js";
 import { parseFigmaUrl, fetchFileTitle } from "../src/figma/client.js";
 import { analyseScreen, packBundle, detectorsAvailable, pythonBin, PKG_ROOT } from "../src/ir/pipeline.mjs";
 import { lensHome } from "../src/store/home.mjs";
+import { llmState, PROVIDERS, defaultModel, sdkInstalled, isAuthorised, chooseProvider } from "../src/llm/client.mjs";
 
 const LENS_HOME = lensHome();
 const WORK = path.join(LENS_HOME, "work");
@@ -33,6 +34,111 @@ const getStore = () => (_store ||= new Store(LENS_HOME));
 const getRegistry = () => (_registry ||= new Registry(LENS_HOME));
 const getSettings = () => (_settings ||= new Settings(LENS_HOME));
 
+function printFigmaTokenSetup(prefix = "") {
+  const cli = "dsh-figma-design-lens-cat";
+  const lines = [
+    "Figma token setup:",
+    "  1. Open Figma in the browser and go to Account settings → Personal access tokens.",
+    "  2. Create a token and copy it once. Do not paste it into chat or commit it.",
+    "  3. Save it locally:",
+    "       " + cli + " token <your-figma-token>",
+    "     or:",
+    "       " + cli + " config --token <your-figma-token>",
+    "  4. Verify with:",
+    "       " + cli + " doctor",
+  ];
+  for (const line of lines) console.log(prefix + line);
+}
+
+// Why a model matters, said once and shown wherever the user decides about
+// it. Renders without one silently fell back to a template that scores far
+// lower, and nothing at install time said a model was involved at all.
+const LLM_WHY = [
+  "Rendering a screen to code uses a large language model.",
+  "  With one, each screen is rebuilt from code the model writes (web, iOS, Android).",
+  "  Without one, renders fall back to a template that only places boxes and text,",
+  "  and score far lower. Analysis itself (add, inspect, the MCP tools) works either way.",
+];
+
+function printLlmSetup(prefix = "") {
+  const cli = "dsh-figma-design-lens-cat";
+  const lines = [
+    "Connect a model:",
+    "  " + cli + " setup                      guided: installs the package and signs you in",
+    "  " + cli + " llm login <provider>       providers: " + PROVIDERS.map((p) => p.id).join(", "),
+  ];
+  for (const line of lines) console.log(prefix + line);
+}
+
+async function ask(rl, question, def = true) {
+  const a = (await rl.question(question + (def ? " [Y/n] " : " [y/N] "))).trim().toLowerCase();
+  if (!a) return def;
+  return a === "y" || a === "yes";
+}
+
+// The package ships as an optional dependency, so an install that skipped or
+// failed it leaves no trace until a render quietly uses the template.
+async function installSdk() {
+  const { spawnSync } = await import("node:child_process");
+  const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+  console.log("  running: npm install --include=optional  (in " + PKG_ROOT + ")");
+  spawnSync(npm, ["install", "--include=optional"], { cwd: PKG_ROOT, stdio: "inherit" });
+  if (sdkInstalled()) { console.log("  ok   LLM package installed"); return true; }
+  console.log("  FAIL the LLM package did not install. Run it by hand:");
+  console.log("       cd " + PKG_ROOT + " && npm install --include=optional");
+  return false;
+}
+
+/** Sign in to one provider and make it the one renders use. */
+async function signIn(provider, rl) {
+  const client = await import("../src/llm/client.mjs");
+  await client.login(provider, {
+    prompt: async (p) => {
+      const opt = p.signal ? { signal: p.signal } : undefined;
+      // Codex asks how to log in before anything else. Printing only the
+      // message left the user to guess an option id; show the choices and
+      // take a number, defaulting to the first (browser login).
+      if (p.type === "select" && Array.isArray(p.options) && p.options.length) {
+        console.log(p.message);
+        p.options.forEach((o, i) => console.log("  " + (i + 1) + ". " + o.label));
+        const a = (await rl.question("Choose 1-" + p.options.length + " [1]: ", opt)).trim();
+        return (p.options[Number(a || 1) - 1] || p.options[0]).id;
+      }
+      // The paste-a-code prompt is a fallback that races the browser
+      // redirect; its signal fires when the redirect wins, which clears it.
+      return (await rl.question(p.message + " ", opt)).trim();
+    },
+    notify: (e) => {
+      if (e.type === "auth_url") {
+        // Printed prominently and opened: the URL is easy to miss
+        // between the runtime's own warnings.
+        console.log("\n" + "-".repeat(60));
+        console.log("authorise in the browser:");
+        console.log(e.url);
+        console.log("-".repeat(60) + "\n");
+        if (process.platform === "darwin") {
+          import("node:child_process")
+            .then((cp) => cp.execFile("open", [e.url], () => {}))
+            .catch(() => {});
+        }
+      } else if (e.type === "device_code") {
+        console.log("code " + e.userCode + " at " + e.verificationUri);
+      } else if (e.message) {
+        console.log(e.message);
+      }
+    },
+  });
+  useProvider(provider);
+  console.log("authorised: " + provider);
+  console.log("credential stored in " + client.authFile());
+}
+
+function useProvider(provider) {
+  const r = chooseProvider(provider);
+  console.log("renders will use: " + r.provider + " / " + r.model);
+}
+
+
 const main = async () => {
   if (cmd === "add" || cmd === "analyze") {
     const url = args[1];
@@ -43,7 +149,7 @@ const main = async () => {
     }
     const settings = getSettings();
     if (!settings.token()) {
-      throw new Error("no Figma token. Run: dsh-figma-design-lens-cat config --token <figd_...>   (or set FIGMA_API_KEY)");
+      throw new Error("no Figma token configured. Run `dsh-figma-design-lens-cat setup` for the first-time guide, or save one with `dsh-figma-design-lens-cat token <your-figma-token>`. Create the token in Figma Account settings → Personal access tokens. Do not paste the token into chat.");
     }
 
     const store = getStore();
@@ -101,7 +207,100 @@ const main = async () => {
       console.log("review:    http://127.0.0.1:" + (settings.read().port || 7420)
         + "/s/" + proj.id + "/" + screenIdOf(node));
     }
+    const st = llmState();
+    if (!st.ready) {
+      console.log();
+      console.log("note: " + st.message + "; renders of this screen will use the template.");
+      console.log("      Connect one with: dsh-figma-design-lens-cat setup");
+    }
     return;
+  }
+
+  if (cmd === "token") {
+    const token = args[1];
+    if (!token) {
+      printFigmaTokenSetup();
+      return;
+    }
+    getSettings().write({ figmaToken: String(token) });
+    console.log("Figma token saved to " + LENS_HOME + "/settings.json");
+    console.log("Run `dsh-figma-design-lens-cat doctor` to verify setup.");
+    return;
+  }
+
+  if (cmd === "setup") {
+    const interactive = process.stdin.isTTY && process.stdout.isTTY && !args.includes("--no-input");
+    const settings = getSettings();
+    console.log("dsh-figma-design-lens-cat first-time setup");
+    console.log();
+
+    console.log("[1/2] Figma token (required)");
+    if (settings.token()) {
+      console.log("  ok   figma token     configured");
+    } else {
+      console.log("  FAIL figma token     missing");
+      console.log();
+      printFigmaTokenSetup("  ");
+    }
+    console.log();
+
+    console.log("[2/2] Model for code generation (optional, strongly recommended)");
+    for (const line of LLM_WHY) console.log("  " + line);
+    console.log();
+    let st = llmState();
+    if (st.ready) {
+      console.log("  ok   model           " + st.message);
+    } else if (!interactive) {
+      console.log("  warn model          " + st.message);
+      printLlmSetup("  ");
+    } else {
+      const readline = await import("node:readline/promises");
+      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+      try {
+        if (await ask(rl, "  Set up a model now?", true)) {
+          if (!sdkInstalled()) {
+            console.log("  This needs the optional package @earendil-works/pi-ai (about 90 packages from npm).");
+            if (await ask(rl, "  Install it now?", true)) await installSdk();
+          }
+          if (sdkInstalled()) {
+            console.log();
+            console.log("  Which subscription do you want renders to use?");
+            PROVIDERS.forEach((p, i) => console.log("    " + (i + 1) + ". " + p.label
+              + "  [" + p.id + "]" + (isAuthorised(p.id) ? "  (signed in)" : "")));
+            const pick = Number((await rl.question("  Choose 1-" + PROVIDERS.length + " [1]: ")).trim() || 1);
+            const provider = (PROVIDERS[pick - 1] || PROVIDERS[0]).id;
+            if (isAuthorised(provider)) {
+              useProvider(provider);
+            } else {
+              try {
+                await signIn(provider, rl);
+              } catch (e) {
+                console.log("  FAIL sign-in did not complete: " + String(e.message).slice(0, 160));
+                console.log("       Try again with: dsh-figma-design-lens-cat llm login " + provider);
+              }
+            }
+          }
+        } else {
+          console.log("  Skipped. Renders will use the template until a model is connected.");
+        }
+      } finally {
+        rl.close();
+      }
+    }
+    st = llmState();
+
+    console.log();
+    console.log("Summary");
+    console.log("  " + (settings.token() ? "ok  " : "FAIL") + " figma token     "
+      + (settings.token() ? "configured" : "missing"));
+    console.log("  " + (st.ready ? "ok  " : "warn") + " model           "
+      + (st.ready ? st.message : st.message + " (renders use the template)"));
+    console.log();
+    console.log("Next steps:");
+    console.log("  dsh-figma-design-lens-cat inspect '<figma link>'");
+    console.log("  dsh-figma-design-lens-cat add '<figma link>'");
+    console.log("  dsh-figma-design-lens-cat serve");
+    process.exit(settings.token() ? 0 : 1);
   }
 
   if (cmd === "config") {
@@ -113,9 +312,20 @@ const main = async () => {
     }
     const det = flag("detectors");
     if (det !== null) settings.write({ runDetectors: det !== "false" });
+    const lp = flag("llm-provider");
+    if (lp && lp !== true) {
+      if (!PROVIDERS.some((p) => p.id === lp)) {
+        throw new Error("unknown provider: " + lp + " (known: " + PROVIDERS.map((p) => p.id).join(", ") + ")");
+      }
+      settings.write({ llmProvider: lp, llmModel: defaultModel(lp) });
+    }
+    const lm = flag("llm-model");
+    if (lm && lm !== true) settings.write({ llmModel: String(lm) });
     const s = settings.redacted();
+    const st = llmState();
     console.log("token:     " + (s.figmaTokenSet ? s.figmaToken : "(not set)"));
     console.log("detectors: " + s.runDetectors);
+    console.log("model:     " + (st.ready ? st.message : "(none: " + st.message + ")"));
     console.log("store:     " + LENS_HOME);
     return;
   }
@@ -151,9 +361,16 @@ const main = async () => {
       console.log((r.ok ? r.action : "skipped") + "  " + r.label
         + (r.ok ? "" : " -- " + r.why));
       console.log("    " + r.file);
+      // Desktop apps get absolute paths; say which, so a stale one is easy to spot.
+      if (r.ok && r.gui && r.entry) console.log("    runs: " + r.entry.command + " " + (r.entry.args || []).join(" "));
+      if (r.warning) console.log("    warning: " + r.warning);
     }
     console.log();
-    console.log("Restart the client for it to pick this up.");
+    console.log("Restart the client for it to pick this up (Cmd+Q for desktop apps; closing the window is not enough).");
+    if (targets.some((t) => t === "claude-desktop" || t === "cursor")) {
+      console.log("Desktop apps are given absolute paths. After changing Node versions or reinstalling");
+      console.log("the package elsewhere, run this again; doctor reports a path that has gone stale.");
+    }
     return;
   }
 
@@ -193,6 +410,9 @@ const main = async () => {
   if (cmd === "inspect") {
     const url = args[1];
     if (!url) throw new Error("usage: dsh-figma-design-lens-cat inspect <figma link>");
+    if (!getSettings().token()) {
+      throw new Error("no Figma token configured. Run `dsh-figma-design-lens-cat setup` for the first-time guide, or save one with `dsh-figma-design-lens-cat token <your-figma-token>`.");
+    }
     const { inspect } = await import("../src/ir/inspect.mjs");
     await inspect(url);
     return;
@@ -336,30 +556,7 @@ const main = async () => {
       const readline = await import("node:readline/promises");
       const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
       try {
-        await client.login(provider, {
-          prompt: async (p) => (await rl.question(p.message + " ")).trim(),
-          notify: (e) => {
-            if (e.type === "auth_url") {
-              // Printed prominently and opened: the URL is easy to miss
-              // between the runtime's own warnings.
-              console.log("\n" + "-".repeat(60));
-              console.log("authorise in the browser:");
-              console.log(e.url);
-              console.log("-".repeat(60) + "\n");
-              if (process.platform === "darwin") {
-                import("node:child_process")
-                  .then((cp) => cp.execFile("open", [e.url], () => {}))
-                  .catch(() => {});
-              }
-            } else if (e.type === "device_code") {
-              console.log("code " + e.userCode + " at " + e.verificationUri);
-            } else if (e.message) {
-              console.log(e.message);
-            }
-          },
-        });
-        console.log("authorised: " + provider);
-        console.log("credential stored in " + client.authFile());
+        await signIn(provider, rl);
       } finally {
         rl.close();
       }
@@ -373,24 +570,17 @@ const main = async () => {
     }
 
     if (sub === "status") {
-      // Presence of a credential is not the same as a working one: an expired
-      // OAuth refresh token sat in the file for days while status said "ok"
-      // and every generation silently fell back to the template.
-      const check = args.includes("--offline") ? null : async (p) => {
-        try {
-          const model = p === "anthropic" ? "claude-sonnet-4-5" : undefined;
-          await client.complete({ provider: p, model, system: "Reply with one word.",
-            prompt: "ok", maxTokens: 5 });
-          return "ok";
-        } catch (e) {
-          return /expired|invalid_grant/i.test(String(e.message)) ? "expired" : "error";
-        }
-      };
-      for (const p of ["anthropic", "openai-codex", "github-copilot"]) {
+      // Each provider is checked with its own model (checkProvider): passing
+      // none for anything but anthropic failed with "unknown model" and
+      // reported a working Codex or Copilot login as broken.
+      const check = args.includes("--offline") ? null
+        : async (p) => (await client.checkProvider(p)).state;
+      const active = llmState().provider;
+      for (const { id: p } of PROVIDERS) {
         if (!client.isAuthorised(p)) { console.log("  --      " + p); continue; }
         const state = check ? await check(p) : "stored";
-        const mark = state === "ok" ? "ok     " : state === "expired" ? "expired" : "error  ";
-        console.log("  " + mark + " " + p
+        const mark = state === "ok" ? "ok     " : state === "expired" ? "expired" : state === "stored" ? "stored " : "error  ";
+        console.log("  " + mark + " " + p + (p === active ? "   (used for renders)" : "")
           + (state === "expired" ? "   run: dsh-figma-design-lens-cat llm login " + p : ""));
       }
       console.log("\ncredentials: " + client.authFile());
@@ -450,26 +640,31 @@ const main = async () => {
   }
 
   if (cmd === "doctor") {
-    const { execFileSync } = await import("node:child_process");
-    const checks = [];
-    checks.push(["node", process.version, Number(process.version.slice(1).split(".")[0]) >= 20]);
-    const py = pythonBin();
-    let pyv = "not found";
-    try { pyv = execFileSync(py, ["--version"], { stdio: "pipe" }).toString().trim(); } catch { /* reported */ }
-    checks.push(["python3", pyv, pyv !== "not found"]);
-    const vision = detectorsAvailable();
-    checks.push(["pillow + numpy", vision ? "available" : "missing (pip install pillow numpy)", vision]);
-    let token = "";
-    try { token = getSettings().token(); } catch { /* store unreadable */ }
-    checks.push(["figma token", token ? "configured" : "missing (dsh-figma-design-lens-cat config --token ...)", !!token]);
-    checks.push(["store", LENS_HOME, true]);
-    let ok = true;
-    for (const [name, val, pass] of checks) {
-      if (!pass) ok = false;
-      console.log((pass ? "  ok   " : "  FAIL ") + name.padEnd(16) + val);
+    // The same list the web Settings page shows, so the two never disagree.
+    const { doctorChecks, doctorOk } = await import("../src/env/doctor.mjs");
+    const checks = doctorChecks();
+    for (const c of checks) {
+      const mark = c.ok ? "  ok   " : c.optional ? "  warn " : "  FAIL ";
+      const fix = !c.ok && c.fix ? " — " + (c.fix.startsWith("dsh-") ? "run: " : "") + c.fix : "";
+      console.log(mark + (c.label + " ").padEnd(16) + c.value + fix);
     }
+    const ok = doctorOk(checks);
+    const token = checks.find((c) => c.id === "figmaToken").ok;
+    const st = llmState();
     console.log();
-    console.log(ok ? "ready" : "some checks failed — see above");
+    if (!token) {
+      printFigmaTokenSetup("  ");
+      console.log();
+    }
+    if (!st.ready) {
+      for (const line of LLM_WHY) console.log("  " + line);
+      console.log();
+      printLlmSetup("  ");
+      console.log();
+    }
+    console.log("The same check is in the web UI: Settings → Environment check.");
+    console.log(ok ? (st.ready ? "ready" : "ready (renders will use the template until a model is connected)")
+      : "some checks failed — see above");
     process.exit(ok ? 0 : 1);
   }
 
@@ -525,6 +720,9 @@ const main = async () => {
     createServer(LENS_HOME, { repoRoot: PKG_ROOT }).listen(port, () => {
       console.log("dsh-figma-design-lens-cat UI: http://127.0.0.1:" + port);
       console.log("store: " + LENS_HOME);
+      const st = llmState();
+      console.log("model: " + (st.ready ? st.message
+        : "none (" + st.message + ") — renders will use the template; run: dsh-figma-design-lens-cat setup"));
     });
     return;
   }
@@ -614,12 +812,17 @@ const main = async () => {
 
   console.log("dsh-figma-design-lens-cat — Figma design understanding for AI coding agents");
   console.log();
+  console.log("  dsh-figma-design-lens-cat setup                     first-time guide: Figma token and model");
+  console.log("  dsh-figma-design-lens-cat doctor                    check local setup");
   console.log('  dsh-figma-design-lens-cat add "<figma url>" [--project <label>] [--detectors]');
   console.log("  dsh-figma-design-lens-cat list                      projects and readiness");
   console.log("  dsh-figma-design-lens-cat screens <project>         screens in a project");
   console.log("  dsh-figma-design-lens-cat projects                  project identities and aliases");
   console.log("  dsh-figma-design-lens-cat serve [--port 7420]       review UI");
+  console.log("  dsh-figma-design-lens-cat token <figma-token>       set the Figma token");
   console.log("  dsh-figma-design-lens-cat config --token <figd_..>  set the Figma token");
+  console.log("  dsh-figma-design-lens-cat llm login <provider>      connect a model: " + PROVIDERS.map((p) => p.id).join(", "));
+  console.log("  dsh-figma-design-lens-cat llm status                which model renders use");
   console.log("  dsh-figma-design-lens-cat service install    run the UI in the background, start at login");
   console.log("  dsh-figma-design-lens-cat service status     is it installed / running?");
   console.log("  dsh-figma-design-lens-cat service stop       stop now (returns at next login)");

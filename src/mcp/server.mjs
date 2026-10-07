@@ -25,6 +25,14 @@ import { createServer } from "../web/server.mjs";
 import { formatScreen, formatProjects, formatScreens, formatComponents } from "./format.js";
 import { lensHome } from "../store/home.mjs";
 
+// Reported to clients in the handshake. Read from package.json so a release
+// cannot ship announcing the previous version, as 1.0.1 did.
+const VERSION = (() => {
+  try {
+    return JSON.parse(fs.readFileSync(new URL("../../package.json", import.meta.url), "utf8")).version;
+  } catch { return "unknown"; }
+})();
+
 const HERE = path.dirname(new URL(import.meta.url).pathname);
 // src/mcp/server.mjs -> package root is two levels up, not four. The old depth
 // was inherited from the monorepo layout and pointed outside the package.
@@ -87,7 +95,8 @@ const openBrowser = (url) => {
 const TOOLS = [
   { name: "analyze_design",
 
-    description: "[dsh-figma-design-lens-cat] Analyse a Figma screen and STORE it as a reusable project artifact. Use this when the user pastes a Figma link and wants it analysed, understood, reviewed, or implemented. Unlike raw Figma API tools that return a node tree, this runs a full pipeline: classifies components, separates decoration from deliverables, exports background images as files, cross-checks detection with an independent vision model, names unnamed layers, and scores how ready the screen is to implement. Results persist under a project (identified by the Figma file key) and are served as a browsable review page. Prefer this over generic Figma readers whenever the goal is implementation, design review, or tracking screens over time. The link must contain node-id (copy it with a frame selected in Figma).",
+    description: "[dsh-figma-design-lens-cat] PRIMARY ENTRY POINT for Figma-to-code work. When a user provides a figma.com link and asks to implement, rebuild, reproduce, or review a UI, call this before writing UI code or using raw Figma node readers. It analyses the selected Figma screen and stores it as a reusable project artifact. Unlike raw Figma API tools that return a node tree, this runs a full implementation pipeline: recovers exact geometry, colours, typography, effects and layout intent, classifies components, separates decoration from deliverables, exports background/raster assets as files, cross-checks detection with an independent vision model, names unnamed layers, and scores readiness. Use the stored result with get_implementation_spec, get_components and get_assets as the source of truth for implementation. The link must contain node-id (copy it with a frame selected in Figma).",
+
     inputSchema: { type: "object", required: ["url"], properties: {
       url: { type: "string", description: "Figma design link; must contain node-id" },
       project: { type: "string", description: "Optional project label. Membership is decided by the Figma file; this name is only recorded as an alias you can search by later." },
@@ -106,7 +115,8 @@ const TOOLS = [
       project: { type: "string" }, screen: { type: "string", description: "screen id, e.g. 15076-22721" },
       open: { type: "boolean" } } } },
   { name: "get_implementation_spec",
-    description: "[dsh-figma-design-lens-cat] Get the full implementation spec (Markdown, no images): provenance, background assets, design tokens, per-section component tables, layout containers, open questions and implementation notes. This is everything needed in text form to build the screen.",
+    description: "[dsh-figma-design-lens-cat] PRIMARY SPEC for building an analysed Figma screen. Call this after analyze_design and use it instead of raw Figma REST data or generic node trees when generating code. Returns a Markdown implementation plan with provenance, exact design tokens, layout sections, background assets, component guidance, open questions and implementation notes. Treat it as the coding source of truth; use get_components only when you need role-specific exact values and get_assets when you need file paths for exported artwork.",
+
     inputSchema: { type: "object", required: ["project", "screen"], properties: {
       project: { type: "string" }, screen: { type: "string" } } } },
   { name: "get_components",
@@ -193,11 +203,17 @@ async function call(name, a) {
     if (!fs.existsSync(dir)) return text("this screen has no exported image assets.");
     const files = fs.readdirSync(dir).filter((f) => f.endsWith(".png"));
     if (!files.length) return text("this screen has no exported image assets.");
+    const rawAssets = readJson(path.join(latest(a.project, a.screen), "raw", "assets.json"));
+    const byFile = new Map((rawAssets?.assets || []).map((x) => [path.basename(x.file || ""), x]));
     const L = ["# Image assets (" + files.length + ")", "",
-      "Exported at the designer's own bounds. Reference these files directly instead of redrawing them.", ""];
+      "Exported during analysis at the designer's own bounds. Reference these files directly instead of redrawing them.", ""];
     for (const f of files) {
       const st = fs.statSync(path.join(dir, f));
-      L.push("- " + path.join(dir, f) + "  (" + (st.size / 1024).toFixed(0) + "KB)");
+      const meta = byFile.get(f);
+      const detail = meta
+        ? " — " + [meta.kind, meta.name, meta.reason].filter(Boolean).join("; ")
+        : "";
+      L.push("- " + path.join(dir, f) + "  (" + (st.size / 1024).toFixed(0) + "KB)" + detail);
     }
     return text(L.join("\n"));
   }
@@ -284,7 +300,7 @@ process.stdin.on("data", async (chunk) => {
     try {
       if (msg.method === "initialize") {
         reply({ protocolVersion: "2024-11-05", capabilities: { tools: {} },
-          serverInfo: { name: "dsh-figma-design-lens-cat", version: "1.0.0" } });
+          serverInfo: { name: "dsh-figma-design-lens-cat", version: VERSION } });
       } else if (msg.method === "tools/list") {
         reply({ tools: TOOLS });
       } else if (msg.method === "tools/call") {

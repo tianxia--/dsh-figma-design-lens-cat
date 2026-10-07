@@ -48,6 +48,7 @@ const main = () => {
   const cross = readJson(path.join(src, base + ".cross.json"));
   const raster = readJson(path.join(src, base + ".raster.json"));
   const bgassets = readJson(path.join(src, base + ".bg-assets.json"));
+  const assetManifest = readJson(path.join(src, base + ".assets.json"));
   const det = readJson(path.join(src, base + ".detectors.json"));
 
   let detcmp = null;
@@ -141,7 +142,7 @@ const main = () => {
   for (const [srcName, dstName] of [[".ir.json", "ir.json"], [".inventory.json", "inventory.json"],
     [".detectors.json", "detectors.json"], [".cross.json", "cross.json"],
     [".raster.json", "raster.json"], [".semantics.json", "semantics.json"],
-    [".bg-assets.json", "bg-assets.json"], [".paint.json", "paint.json"]]) {
+    [".bg-assets.json", "bg-assets.json"], [".assets.json", "assets.json"], [".paint.json", "paint.json"]]) {
     copy(path.join(src, base + srcName), path.join(out, "raw", dstName));
   }
   copy(path.join(src, base + ".spec.md"), path.join(out, "implement.md"));
@@ -167,6 +168,7 @@ const main = () => {
       implement: "implement.md",
       components: Object.keys(byRole).map((r) => "components/" + r + ".json"),
       assets: assetFiles.map((f) => "assets/" + f),
+      assetManifest: assetManifest ? "raw/assets.json" : null,
       review: "review/index.html",
       annotated: tiles,
       design: "review/design.png",
@@ -176,7 +178,7 @@ const main = () => {
       start: "Read implement.md to build this screen; it contains no images and is a complete text spec.",
       exactValues: "For exact values read components/<role>.json; measured.* comes from the Figma file and must not be rewritten.",
       semantics: "name/describes are model inferences with a confidence; below 0.7 needs human confirmation.",
-      images: "assets/ holds exported images; reference them directly instead of redrawing.",
+      images: "assets/ holds every clear image/vector candidate exported during analysis; raw/assets.json maps each file back to its Figma node, reason, bounds and kind. Reference exported files directly instead of redrawing.",
       limits: "readiness.blockers lists what this analysis cannot provide (such as interaction states); resolve or ask a human before building.",
     },
   };

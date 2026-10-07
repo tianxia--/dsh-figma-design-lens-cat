@@ -13,7 +13,7 @@ import { renderWeb, renderIos, score } from "./run.mjs";
 import { generateProject } from "./android.mjs";
 import { loadComponents } from "./web.mjs";
 import { trustStorePath } from "../env/truststore.mjs";
-import { isAuthorised } from "../llm/client.mjs";
+import { isAuthorised, llmState } from "../llm/client.mjs";
 import { stalenessNote } from "../ir/staleness.mjs";
 import { lensHome } from "../store/home.mjs";
 
@@ -138,18 +138,32 @@ async function runPlatform(platform, latest, projectDir, screenId, emit, opts = 
     // too, and having it scoped to one branch made them throw on every run.
     let fellBack = null;
 
+    // Which model to use, from what the user chose in setup. A render that
+    // cannot use one says why, in the same words setup and doctor use, so a
+    // template render is never mistaken for a model that did badly.
+    const state = llmState();
+    const provider = opts.provider || state.provider;
+    const model = opts.model || state.model;
+    const useModel = opts.llm !== false
+      && (opts.provider ? isAuthorised(opts.provider) : state.ready);
+    if (opts.llm !== false && !useModel) {
+      fellBack = (opts.provider ? opts.provider + " is not signed in" : state.message)
+        + "; run: dsh-figma-design-lens-cat setup";
+      emit({ platform, phase: "log", line: "using the template: " + fellBack });
+    }
+
     if (platform === "android") {
       const dir = path.join(projectDir, "render", "android", screenId);
       fs.mkdirSync(dir, { recursive: true });
       let modelCode = null;
-      if (opts.llm !== false && isAuthorised(opts.provider || "anthropic")) {
+      if (useModel) {
         emit({ platform, phase: "log", line: "asking the model for an implementation" });
         try {
           const { generate: gen } = await import("./codegen.mjs");
           const r = await gen({
             latest, target: "android",
-            provider: opts.provider || "anthropic",
-            model: opts.model || "claude-sonnet-4-5",
+            provider,
+            model,
             signal: opts.signal,
           });
           if (r.code && r.code.length > 40) modelCode = r.code;
@@ -170,12 +184,12 @@ async function runPlatform(platform, latest, projectDir, screenId, emit, opts = 
         (line) => emit({ platform, phase: "log", line }), modelCode);
       if (out.ok) { out.dir = dir; out.by = modelCode ? "model" : "template"; }
     } else {
-      const llm = opts.llm !== false && isAuthorised(opts.provider || "anthropic");
+      const llm = useModel;
       if (llm) emit({ platform, phase: "log", line: "asking the model for an implementation" });
       const gen = await generate(platform, latest, projectDir, screenId, {
         llm,
-        provider: opts.provider,
-        model: opts.model,
+        provider,
+        model,
         onLog: (line) => emit({ platform, phase: "log", line }),
       });
       emit({ platform, phase: "log", line: "rendering (" + (gen.by || "template") + ")" });
@@ -216,7 +230,9 @@ async function runPlatform(platform, latest, projectDir, screenId, emit, opts = 
     // leaving it to be found one render at a time.
     let losses = [];
     try {
-      const bgFile = path.join(latest, "raw", "bg-assets.json");
+      const bgFile = fs.existsSync(path.join(latest, "raw", "assets.json"))
+        ? path.join(latest, "raw", "assets.json")
+        : path.join(latest, "raw", "bg-assets.json");
       if (fs.existsSync(bgFile)) {
         const groups = JSON.parse(fs.readFileSync(bgFile, "utf8")).groups || [];
         const byKind = new Map();
@@ -251,7 +267,7 @@ async function runPlatform(platform, latest, projectDir, screenId, emit, opts = 
       stale: note || null,
     };
     emit({ platform, phase: "done", fidelity: s.result, ms: res.ms,
-      missingFonts: fonts, losses });
+      missingFonts: fonts, losses, by: res.by, fellBackBecause: fellBack });
     return res;
   } catch (e) {
     const error = String(e.message || e).slice(0, 300);

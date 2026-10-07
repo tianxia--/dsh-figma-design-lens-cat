@@ -49,14 +49,13 @@ function specMarkdown(inv, cross, raster, meta, detcmp, bgassets) {
   L.push("");
 
   if (bgassets && bgassets.groups && bgassets.groups.length) {
-    L.push("## 0.5 Background image assets (must be implemented as images)", "");
-    L.push("These layer groups form background imagery and have been **exported as PNG at the designer's own bounds**.");
-    L.push("Reference the exported files directly; do not recreate the shapes inside them.", "");
-    L.push("| Asset | Layer group | Size | Position | Shapes | Colours | File |", "|---|---|---|---|---|---|---|");
+    L.push("## 0.5 Exported image/vector assets (must be implemented as images)", "");
+    L.push("These are clear Figma asset candidates exported during analysis at the designer bounds, before detector checks.");
+    L.push("Reference the exported files directly; do not recreate the pixels inside them.", "");
+    L.push("| Asset | Figma node | Kind | Size | Position | Reason | File |", "|---|---|---|---|---|---|---|");
     for (const g of bgassets.groups) {
-      L.push("| " + esc(g.name) + " | `" + g.id + "` | " + r1(g.box.w) + "×" + r1(g.box.h)
-        + " | " + r1(g.box.x) + "," + r1(g.box.y) + " | " + g.parts + " | "
-        + (g.fills || []).map((f) => "`" + f + "`").join(" ") + " | `" + g.file + "` |");
+      L.push("| " + esc(g.name) + " | `" + g.id + "` | " + (g.kind || (g.hasImageFill ? "image-fill" : "graphic-group")) + " | " + r1(g.box.w) + "×" + r1(g.box.h)
+        + " | " + r1(g.box.x) + "," + r1(g.box.y) + " | " + esc(g.reason || "exported asset candidate") + " | `" + g.file + "` |");
     }
     L.push("");
   }
