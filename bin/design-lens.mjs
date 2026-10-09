@@ -334,7 +334,7 @@ const main = async () => {
   // config by hand means editing JSON by hand, and a trailing comma there
   // takes down the editor's whole configuration.
   if (cmd === "install") {
-    const { install, detect } = await import("../src/mcp/install.mjs");
+    const { install, detect, CLIENTS } = await import("../src/mcp/install.mjs");
     const which = args[1];
 
     if (!which) {
@@ -367,7 +367,7 @@ const main = async () => {
     }
     console.log();
     console.log("Restart the client for it to pick this up (Cmd+Q for desktop apps; closing the window is not enough).");
-    if (targets.some((t) => t === "claude-desktop" || t === "cursor")) {
+    if (targets.some((t) => CLIENTS[t] && CLIENTS[t].gui)) {
       console.log("Desktop apps are given absolute paths. After changing Node versions or reinstalling");
       console.log("the package elsewhere, run this again; doctor reports a path that has gone stale.");
     }
@@ -802,7 +802,7 @@ const main = async () => {
       console.log('  args = ["' + mcpPath + '"]');
       console.log('  env = { LENS_HOME = "' + LENS_HOME + '" }');
     } else {
-      console.log("JSON config (Claude Desktop, Cursor, Windsurf, …):");
+      console.log("JSON config (Claude Desktop, Cursor, WorkBuddy, Windsurf, …):");
       console.log();
       console.log(JSON.stringify({ mcpServers: { "dsh-figma-design-lens-cat": {
         command: process.execPath, args: [mcpPath], env: { LENS_HOME } } } }, null, 2));

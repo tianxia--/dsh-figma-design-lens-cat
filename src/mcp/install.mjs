@@ -53,11 +53,38 @@ export const CLIENTS = {
     file: () => path.join(os.homedir(), ".codex", "config.toml"),
     format: "toml",
   },
+  // Tencent WorkBuddy, the desktop agent. Its user-level MCP servers live in
+  // ~/<data folder>/mcp.json, and the data folder differs by edition: the
+  // docs say ~/.workbuddy, but the "WorkBuddy AI" desktop app ships
+  // dataFolderName ".workbuddy-ai" and never reads ~/.workbuddy/mcp.json --
+  // an entry written there was silently ignored. The app honours
+  // WORKBUDDY_DATA_FOLDER_NAME, so that wins; otherwise the folder that exists.
+  // The file only appears once a first server is added, so presence is
+  // judged by the folder, or `install all` would skip a fresh install.
+  // Entries follow its documented shape exactly: command and args only.
+  workbuddy: {
+    label: "WorkBuddy",
+    file: () => path.join(workbuddyDir(), "mcp.json"),
+    dir: () => workbuddyDir(),
+    format: "json",
+    gui: true,
+    plain: true,
+    at: ["mcpServers"],
+  },
 };
 
-const entry = (client) => client.gui
-  ? { type: "stdio", command: process.execPath, args: [MCP_SCRIPT] }
-  : { type: "stdio", command: COMMAND, args: [] };
+function workbuddyDir() {
+  const env = String(process.env.WORKBUDDY_DATA_FOLDER_NAME || "").trim();
+  if (env) return path.join(os.homedir(), env);
+  const desktop = path.join(os.homedir(), ".workbuddy-ai");
+  return fs.existsSync(desktop) ? desktop : path.join(os.homedir(), ".workbuddy");
+}
+
+const entry = (client) => {
+  if (!client.gui) return { type: "stdio", command: COMMAND, args: [] };
+  const e = { command: process.execPath, args: [MCP_SCRIPT] };
+  return client.plain ? e : { type: "stdio", ...e };
+};
 
 // macOS guards these folders per app. A desktop app that was never granted
 // access cannot read a server script inside them and fails with EPERM, which
@@ -201,5 +228,5 @@ export function checkInstalled() {
 export function detect() {
   return Object.entries(CLIENTS)
     .map(([key, c]) => ({ key, label: c.label, file: c.file(),
-      present: fs.existsSync(c.file()) }));
+      present: fs.existsSync(c.file()) || Boolean(c.dir && fs.existsSync(c.dir())) }));
 }

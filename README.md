@@ -190,21 +190,24 @@ dsh-figma-design-lens-cat install
 
 # Wire it into one, or all of them
 dsh-figma-design-lens-cat install claude
+dsh-figma-design-lens-cat install workbuddy
 dsh-figma-design-lens-cat install all
 ```
 
-Claude Code, Claude Desktop, Cursor and Codex are written directly; the rest
+Claude Code, Claude Desktop, Cursor, Codex and WorkBuddy are written directly; the rest
 of each config is left as it was, and a file that does not parse is reported
 rather than replaced. Restart the client afterwards -- for a desktop app, quit
 it with Cmd+Q; closing the window is not enough.
 
 Claude Code and Codex start from a terminal, so they get the command name and
-find it on the shell's PATH. Claude Desktop and Cursor get absolute paths to
+find it on the shell's PATH. Claude Desktop, Cursor and WorkBuddy get absolute paths to
 node and to the server script instead: a desktop app's PATH is not the
 shell's, and may not contain npm's global bin directory or node itself. After
 changing Node versions or reinstalling the package somewhere else, run
 `install` again -- `doctor` and the Settings page report an entry whose path
 has gone stale.
+
+WorkBuddy has its own steps -- see [WorkBuddy](#workbuddy) below.
 
 On macOS, a desktop app cannot read files in your Desktop, Documents or
 Downloads folders until it is granted access. A package installed from npm
@@ -248,8 +251,60 @@ To print the config entry instead of writing it -- for a client `install` does n
 ```bash
 dsh-figma-design-lens-cat install-mcp --client claude   # a `claude mcp add` command
 dsh-figma-design-lens-cat install-mcp --client codex    # a ~/.codex/config.toml block
-dsh-figma-design-lens-cat install-mcp --client json     # JSON for Claude Desktop, Cursor, Windsurf
+dsh-figma-design-lens-cat install-mcp --client json     # JSON for Claude Desktop, Cursor, WorkBuddy, Windsurf
 ```
+
+### WorkBuddy
+
+Two ways to add the server to Tencent WorkBuddy. Both need the package
+installed and set up first:
+
+```bash
+npm install -g dsh-figma-design-lens-cat
+dsh-figma-design-lens-cat setup     # Figma token, and optionally a model
+```
+
+**1. With the CLI** (1.2.0 and later)
+
+```bash
+dsh-figma-design-lens-cat install workbuddy
+dsh-figma-design-lens-cat doctor    # expect: mcp workbuddy  configured
+```
+
+WorkBuddy keeps its servers in `mcp.json` inside its data folder, and that
+folder depends on the edition: the WorkBuddy AI desktop app uses
+`~/.workbuddy-ai/mcp.json`, while WorkBuddy's docs describe
+`~/.workbuddy/mcp.json`. An entry in the wrong one is silently ignored.
+`install workbuddy` writes to `~/.workbuddy-ai` when it exists and to
+`~/.workbuddy` otherwise; set `WORKBUDDY_DATA_FOLDER_NAME` to choose another.
+
+**2. From WorkBuddy's own settings** (any version)
+
+WorkBuddy decides where to save, so this works whatever its data folder is
+called.
+
+1. Print the entry for this machine. It holds absolute paths to node and to
+   the server script, so it has to be generated on the machine that uses it:
+
+   ```bash
+   dsh-figma-design-lens-cat install-mcp --client json
+   ```
+
+2. In WorkBuddy, open **Plugins → MCP servers → Configure MCP**
+   (插件 → MCP 服务器 → 配置 MCP).
+3. Add the `dsh-figma-design-lens-cat` entry under `mcpServers` and save.
+
+**Then, either way**
+
+- With the CLI, quit WorkBuddy with Cmd+Q and reopen it: it does not pick up
+  an `mcp.json` edited from outside while it is running. Saving from its own
+  settings applies straight away; restart only if the server does not appear.
+- Under **Plugins → MCP servers** (插件 → MCP 服务器), turn
+  `dsh-figma-design-lens-cat` on -- a newly added server can start switched
+  off -- and check that it shows green.
+- Paste a Figma link and ask for the screen, e.g. "implement this screen",
+  followed by the link. If the agent replies that it will use the CLI
+  instead, the server is not loaded: check the switch, then `doctor`.
 
 ## Background service (macOS)
 
@@ -311,7 +366,7 @@ Short alias for every command: `dlc`.
 | | |
 |---|---|
 | `install` | List the MCP clients found on this machine |
-| `install <client>` / `install all` | Wire the MCP server into `claude`, `claude-desktop`, `cursor`, `codex`, or all found |
+| `install <client>` / `install all` | Wire the MCP server into `claude`, `claude-desktop`, `cursor`, `codex`, `workbuddy`, or all found |
 | `install-mcp [--client claude\|codex\|json]` | Print the config entry instead of writing it |
 
 **Code generation and benchmarks**
