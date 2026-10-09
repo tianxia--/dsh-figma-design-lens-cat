@@ -76,6 +76,48 @@ async function ask(rl, question, def = true) {
   return a === "y" || a === "yes";
 }
 
+// Prompts go through an output stream that can be muted. Overriding
+// readline's _writeToOutput used to hide typing, but Node 22's readline
+// writes through an internal symbol and the key was echoed in full.
+async function makeRl() {
+  const readline = await import("node:readline/promises");
+  const { Writable } = await import("node:stream");
+  const out = new Writable({
+    write(chunk, enc, cb) { if (!out.muted) process.stdout.write(chunk); cb(); },
+  });
+  out.muted = false;
+  const rl = readline.createInterface({ input: process.stdin, output: out, terminal: Boolean(process.stdin.isTTY) });
+  rl.lensOut = out;
+  return rl;
+}
+
+// Read a secret without echoing it: the prompt is written, the keystrokes
+// are not. A key typed this way never lands in shell history either, which
+// a --api-key argument would.
+async function askHidden(rl, question) {
+  process.stdout.write(question);
+  if (rl.lensOut) rl.lensOut.muted = true;
+  try { return (await rl.question("")).trim(); }
+  finally {
+    if (rl.lensOut) rl.lensOut.muted = false;
+    process.stdout.write("\n");
+  }
+}
+
+/** Connect a built-in service with its API key; its whole catalog becomes choosable. */
+async function addServiceKey(rl, provider) {
+  const client = await import("../src/llm/client.mjs");
+  const svc = (await client.keyServices()).find((s) => s.id === provider);
+  if (!svc) {
+    throw new Error(provider + " is not a service that takes an API key; see: dsh-figma-design-lens-cat llm services");
+  }
+  const key = await askHidden(rl, "API key for " + svc.name + " (input hidden): ");
+  const r = await client.saveProviderKey(provider, key);
+  console.log("saved. " + r.models + " models from " + r.name + " can be chosen now.");
+  console.log("renders will use: " + r.provider + " / " + r.model);
+  console.log("see or switch models: dsh-figma-design-lens-cat llm models");
+}
+
 // The package ships as an optional dependency, so an install that skipped or
 // failed it leaves no trace until a render quietly uses the template.
 async function installSdk() {
@@ -254,8 +296,7 @@ const main = async () => {
       console.log("  warn model          " + st.message);
       printLlmSetup("  ");
     } else {
-      const readline = await import("node:readline/promises");
-      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+      const rl = await makeRl();
       try {
         if (await ask(rl, "  Set up a model now?", true)) {
           if (!sdkInstalled()) {
@@ -264,19 +305,34 @@ const main = async () => {
           }
           if (sdkInstalled()) {
             console.log();
-            console.log("  Which subscription do you want renders to use?");
+            console.log("  Which model service do you want renders to use?");
             PROVIDERS.forEach((p, i) => console.log("    " + (i + 1) + ". " + p.label
               + "  [" + p.id + "]" + (isAuthorised(p.id) ? "  (signed in)" : "")));
-            const pick = Number((await rl.question("  Choose 1-" + PROVIDERS.length + " [1]: ")).trim() || 1);
-            const provider = (PROVIDERS[pick - 1] || PROVIDERS[0]).id;
-            if (isAuthorised(provider)) {
-              useProvider(provider);
+            const other = PROVIDERS.length + 1;
+            console.log("    " + other + ". Another service with an API key (DeepSeek, Kimi, Qwen, Z.AI, OpenAI, Gemini, OpenRouter, ...)");
+            const pick = Number((await rl.question("  Choose 1-" + other + " [1]: ")).trim() || 1);
+            if (pick === other) {
+              const client = await import("../src/llm/client.mjs");
+              const services = await client.keyServices();
+              const top = services.slice(0, 15);
+              top.forEach((s, i) => console.log("    " + String(i + 1).padStart(2) + ". " + s.name
+                + "  [" + s.id + "]  " + s.models + " models" + (s.added ? "  (added)" : "")));
+              console.log("    or type the id of any of " + services.length + " services (dsh-figma-design-lens-cat llm services)");
+              const a = (await rl.question("  Choose 1-" + top.length + " or an id [1]: ")).trim() || "1";
+              const chosen = /^\d+$/.test(a) ? (top[Number(a) - 1] || top[0]).id : a;
+              try { await addServiceKey(rl, chosen); }
+              catch (e) { console.log("  FAIL " + String(e.message).slice(0, 200)); }
             } else {
-              try {
-                await signIn(provider, rl);
-              } catch (e) {
-                console.log("  FAIL sign-in did not complete: " + String(e.message).slice(0, 160));
-                console.log("       Try again with: dsh-figma-design-lens-cat llm login " + provider);
+              const provider = (PROVIDERS[pick - 1] || PROVIDERS[0]).id;
+              if (isAuthorised(provider)) {
+                useProvider(provider);
+              } else {
+                try {
+                  await signIn(provider, rl);
+                } catch (e) {
+                  console.log("  FAIL sign-in did not complete: " + String(e.message).slice(0, 160));
+                  console.log("       Try again with: dsh-figma-design-lens-cat llm login " + provider);
+                }
               }
             }
           }
@@ -314,10 +370,12 @@ const main = async () => {
     if (det !== null) settings.write({ runDetectors: det !== "false" });
     const lp = flag("llm-provider");
     if (lp && lp !== true) {
-      if (!PROVIDERS.some((p) => p.id === lp)) {
-        throw new Error("unknown provider: " + lp + " (known: " + PROVIDERS.map((p) => p.id).join(", ") + ")");
+      // Built-in subscriptions and custom providers alike; chooseProvider
+      // keeps a model already chosen for that provider.
+      try { chooseProvider(lp); } catch (e) {
+        const known = [...PROVIDERS.map((p) => p.id), ...Object.keys((settings.read().llmProviders) || {})];
+        throw new Error(e.message + " (known: " + known.join(", ") + ")");
       }
-      settings.write({ llmProvider: lp, llmModel: defaultModel(lp) });
     }
     const lm = flag("llm-model");
     if (lm && lm !== true) settings.write({ llmModel: String(lm) });
@@ -552,11 +610,13 @@ const main = async () => {
     const client = await import("../src/llm/client.mjs");
 
     if (sub === "login") {
+      // A subscription signs in through the browser; any other built-in
+      // service is connected with its API key, typed without echo.
       const provider = args[2] || "anthropic";
-      const readline = await import("node:readline/promises");
-      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+      const rl = await makeRl();
       try {
-        await signIn(provider, rl);
+        if (PROVIDERS.some((p) => p.id === provider)) await signIn(provider, rl);
+        else await addServiceKey(rl, provider);
       } finally {
         rl.close();
       }
@@ -564,8 +624,27 @@ const main = async () => {
     }
 
     if (sub === "logout") {
-      await client.logout(args[2] || "anthropic");
-      console.log("signed out");
+      const provider = args[2] || "anthropic";
+      if (PROVIDERS.some((p) => p.id === provider)) {
+        await client.logout(provider);
+        console.log("signed out of " + provider);
+      } else {
+        console.log(await client.removeProviderKey(provider) ? "removed the API key for " + provider : "no API key saved for " + provider);
+      }
+      return;
+    }
+
+    // Built-in services that need only an API key: `llm login <id>` adds one.
+    if (sub === "services") {
+      const list = await client.keyServices();
+      if (!list.length) { console.log("the LLM package is not installed; run: dsh-figma-design-lens-cat setup"); return; }
+      const w = Math.max(...list.map((s) => s.id.length));
+      for (const s of list) {
+        console.log("  " + s.id.padEnd(w + 2) + String(s.models).padStart(4) + " models  " + s.name + (s.added ? "  (added)" : ""));
+      }
+      console.log();
+      console.log("add one:  dsh-figma-design-lens-cat llm login <id>     (asks for its API key)");
+      console.log("any other endpoint:  dsh-figma-design-lens-cat llm provider add <name> --base-url <url> --api-key-env <VAR>");
       return;
     }
 
@@ -583,11 +662,124 @@ const main = async () => {
         console.log("  " + mark + " " + p + (p === active ? "   (used for renders)" : "")
           + (state === "expired" ? "   run: dsh-figma-design-lens-cat llm login " + p : ""));
       }
+      for (const c of client.listCustomProviders()) {
+        if (!c.ready) { console.log("  error   " + c.id + "   " + c.why); continue; }
+        const state = check ? await check(c.id) : "stored";
+        const mark = state === "ok" ? "ok     " : state === "stored" ? "stored " : "error  ";
+        console.log("  " + mark + " " + c.id + "   (custom, " + c.keySource + ")"
+          + (c.id === active ? "   (used for renders)" : ""));
+      }
       console.log("\ncredentials: " + client.authFile());
       return;
     }
 
-    console.log("usage: dsh-figma-design-lens-cat llm <login|logout|status> [provider]");
+    // Every model a render could use, grouped by provider.
+    if (sub === "models") {
+      const { groups, current } = await client.listModelGroups();
+      for (const g of groups) {
+        const where = g.kind === "custom" ? "  " + g.api + "  " + g.baseURL : "";
+        console.log(g.label + "  [" + g.id + "]" + where + (g.ready ? "" : "  -- " + g.why));
+        if (!g.ready && g.kind === "subscription") {
+          console.log("    " + g.models.length + " models; sign in with: dsh-figma-design-lens-cat llm login " + g.id);
+          console.log();
+          continue;
+        }
+        const w = Math.max(10, ...g.models.map((m) => m.id.length));
+        for (const m of g.models) {
+          const on = current && current.provider === g.id && current.model === m.id;
+          console.log((on ? "  * " : "    ") + m.id.padEnd(w + 2) + (m.name !== m.id ? m.name : ""));
+        }
+        console.log();
+      }
+      console.log(current ? "renders use: " + current.provider + " / " + current.model : "no model is connected");
+      console.log("switch with:  dsh-figma-design-lens-cat llm use <provider>/<model>");
+      return;
+    }
+
+    // Choose the model renders use: "provider/model", "provider model", or a
+    // provider alone to keep its current model.
+    if (sub === "use") {
+      const a = args[2] || "";
+      const [provider, model] = a.includes("/") && !args[3]
+        ? [a.slice(0, a.indexOf("/")), a.slice(a.indexOf("/") + 1)] : [a, args[3]];
+      if (!provider) throw new Error("usage: dsh-figma-design-lens-cat llm use <provider>/<model>");
+      const r = model ? await client.chooseModel(provider, model) : client.chooseProvider(provider);
+      console.log("renders will use: " + r.provider + " / " + r.model);
+      return;
+    }
+
+    // One request to a provider, with a given model or the one renders use.
+    if (sub === "test") {
+      const provider = args[2] || llmState().provider;
+      if (!provider) throw new Error("usage: dsh-figma-design-lens-cat llm test <provider> [model]");
+      const r = await client.checkProvider(provider, args[3]);
+      console.log(r.state + "  " + provider + (r.model ? " / " + r.model : "") + (r.detail ? "  " + r.detail : "")
+        + (r.note ? "  (" + r.note + ")" : ""));
+      process.exit(r.state === "ok" ? 0 : 1);
+    }
+
+    // Custom providers: endpoints the built-in catalog does not describe.
+    if (sub === "provider") {
+      const op = args[3] !== undefined || ["add", "remove", "list"].includes(args[2]) ? args[2] : "list";
+      if (op === "list") {
+        const list = client.listCustomProviders();
+        if (!list.length) console.log("no custom providers; add one with: dsh-figma-design-lens-cat llm provider add <id> --base-url <url> --model <id>");
+        for (const c of list) {
+          console.log(c.displayName + "  [" + c.id + "]  " + c.api + "  " + c.baseURL);
+          console.log("    key: " + (c.apiKeySet ? c.apiKey : c.apiKeyEnv ? "$" + c.apiKeyEnv : "none")
+            + (c.ready ? "" : "  -- " + c.why));
+          console.log("    models: " + c.models.map((m) => m.id).join(", "));
+        }
+        return;
+      }
+      const id = args[3];
+      if (!id) throw new Error("usage: dsh-figma-design-lens-cat llm provider " + op + " <id>");
+      if (op === "remove") {
+        console.log(client.removeCustomProvider(id) ? "removed " + id : "no custom provider " + id);
+        return;
+      }
+      if (op !== "add") throw new Error("usage: dsh-figma-design-lens-cat llm provider <add|list|remove>");
+      const { parseModelArg } = await import("../src/llm/custom.mjs");
+      const many = (n) => args.flatMap((x, i) => (x === "--" + n && args[i + 1] ? [args[i + 1]] : []));
+      const existing = client.customProviders()[id];
+      let models = many("model").map(parseModelArg);
+      // No --model: ask the endpoint which models it serves. --fetch-models
+      // does the same for a provider already added.
+      if (!models.length && (!existing || args.includes("--fetch-models"))) {
+        const k = flag("api-key");
+        const d = await client.discoverModels({
+          id: existing ? id : undefined,
+          baseURL: flag("base-url") === true ? undefined : flag("base-url") || (existing && existing.baseURL),
+          apiKey: k === true ? undefined : k || undefined,
+          apiKeyEnv: flag("api-key-env") === true ? undefined : flag("api-key-env") || (existing && existing.apiKeyEnv),
+          api: flag("api") === true ? undefined : flag("api") || (existing && existing.api) || undefined,
+        }).catch((e) => { throw new Error(e.message + "; or name them with --model <id>"); });
+        models = d.models;
+        console.log("found " + models.length + " models at " + d.url);
+      }
+      const key = flag("api-key");
+      const r = await client.saveCustomProvider({
+        id,
+        displayName: flag("name") === true ? undefined : flag("name") || (existing && existing.displayName),
+        api: flag("api") === true ? undefined : flag("api") || (existing && existing.api),
+        baseURL: flag("base-url") === true ? undefined : flag("base-url") || (existing && existing.baseURL),
+        apiKey: key === true ? undefined : key || undefined,
+        apiKeyEnv: flag("api-key-env") === true ? undefined : flag("api-key-env") || (existing && existing.apiKeyEnv),
+        models: models.length ? models : (existing ? existing.models : []),
+      });
+      console.log((existing ? "updated " : "added ") + r.displayName + "  [" + r.id + "]  " + r.api + "  " + r.baseURL);
+      console.log("    models: " + r.models.map((m) => m.id).join(", "));
+      console.log("    key: " + (r.apiKeySet ? r.apiKey + " (saved, mode 600)" : r.apiKeyEnv ? "$" + r.apiKeyEnv : "none")
+        + (r.ready ? "" : "  -- " + r.why));
+      if (key && key !== true) {
+        console.log("note: a key on the command line stays in your shell history;");
+        console.log("      --api-key-env or the web Settings page avoid that.");
+      }
+      console.log("use it:  dsh-figma-design-lens-cat llm use " + r.id + "/" + r.models[0].id);
+      return;
+    }
+
+    console.log("usage: dsh-figma-design-lens-cat llm <login|logout|status|models|use|test|provider> ...");
     return;
   }
 
@@ -822,7 +1014,10 @@ const main = async () => {
   console.log("  dsh-figma-design-lens-cat token <figma-token>       set the Figma token");
   console.log("  dsh-figma-design-lens-cat config --token <figd_..>  set the Figma token");
   console.log("  dsh-figma-design-lens-cat llm login <provider>      connect a model: " + PROVIDERS.map((p) => p.id).join(", "));
-  console.log("  dsh-figma-design-lens-cat llm status                which model renders use");
+  console.log("  dsh-figma-design-lens-cat llm status                which providers work, which one renders use");
+  console.log("  dsh-figma-design-lens-cat llm models                every model renders can use, grouped by provider");
+  console.log("  dsh-figma-design-lens-cat llm use <provider>/<model> choose the model renders use");
+  console.log("  dsh-figma-design-lens-cat llm provider add <id> --base-url <url> --model <id> [--api ...] [--api-key-env ...]");
   console.log("  dsh-figma-design-lens-cat service install    run the UI in the background, start at login");
   console.log("  dsh-figma-design-lens-cat service status     is it installed / running?");
   console.log("  dsh-figma-design-lens-cat service stop       stop now (returns at next login)");

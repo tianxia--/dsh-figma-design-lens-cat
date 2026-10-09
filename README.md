@@ -64,29 +64,36 @@ dsh-figma-design-lens-cat config --token <your-figma-token>
 
 ### Model
 
-`setup` asks before changing anything. If you agree, it installs the optional package `@earendil-works/pi-ai` when it is missing, asks which subscription to use, and opens the browser to sign in:
+Rendering a screen to code uses a large language model; analysis does not.
+Connect one in any of four ways, then switch between every model of every
+connected service:
 
-| Provider | Subscription | Default model |
-|---|---|---|
-| `anthropic` | Claude Pro / Max | `claude-sonnet-4-5` |
-| `openai-codex` | ChatGPT Plus / Pro (via Codex) | `gpt-5.5` |
-| `github-copilot` | GitHub Copilot | `claude-sonnet-4.6` |
+- **Subscription sign-in** -- Claude Pro / Max or ChatGPT Plus / Pro (Codex),
+  through the browser.
+- **A common service, by API key** -- about thirty ship with their own model
+  lists: DeepSeek, Kimi, Qwen, Z.AI, MiniMax, OpenAI, Gemini, OpenRouter and more.
+- **Any other endpoint** -- a company gateway or a local Ollama: its address
+  and key; its models are fetched.
+- **By hand** -- when an endpoint cannot list its models.
 
-Or from the review UI: open **Settings → Model for code generation**. It installs the package if it is missing and signs in to Claude or Codex: the sign-in page opens in a new tab and the page updates by itself when you finish. If the browser cannot return to this machine on its own, paste the code it shows into the box on the page. Sign-in, test, switching the provider renders use, and sign-out all live there. They only answer requests from the machine the UI runs on.
+All of it is in the review UI under **Settings → Model for code generation**:
 
-The same steps by hand:
+![The model card in Settings](docs/images/models-overview.en.png)
+
+Or from the CLI:
 
 ```bash
-# Only needed if the package is missing (doctor says so)
-cd "$(npm root -g)/dsh-figma-design-lens-cat" && npm install --include=optional
-
-# Sign in; the provider you sign in to becomes the one renders use
-dsh-figma-design-lens-cat llm login anthropic
-
-# Switch provider or model later
-dsh-figma-design-lens-cat config --llm-provider openai-codex
-dsh-figma-design-lens-cat config --llm-model gpt-5.4
+dsh-figma-design-lens-cat llm login anthropic           # sign in to a subscription
+dsh-figma-design-lens-cat llm login deepseek            # a common service; asks for its key
+dsh-figma-design-lens-cat llm provider add gateway \
+  --base-url https://gateway.example.com/v1 --api-key-env GATEWAY_API_KEY   # models fetched
+dsh-figma-design-lens-cat llm models                    # every model, grouped by service
+dsh-figma-design-lens-cat llm use deepseek/deepseek-v4-pro
 ```
+
+**[The model setup guide](docs/model-services.md)** ([中文](docs/model-services.zh.md))
+walks through each way with screenshots, and covers keys, privacy and
+troubleshooting.
 
 ### Verify
 
@@ -373,9 +380,15 @@ Short alias for every command: `dlc`.
 
 | | |
 |---|---|
-| `llm login [provider]` | Sign in for code generation and make it the provider renders use (`anthropic`, `openai-codex`, `github-copilot`; default `anthropic`) |
-| `llm logout [provider]` | Sign out |
-| `llm status [--offline]` | Which providers are signed in, which one renders use, and whether the login still works |
+| `llm login [provider]` | Connect a model service: a subscription (`anthropic`, `openai-codex`, `github-copilot`) signs in through the browser; any other service in `llm services` asks for its API key. Default `anthropic` |
+| `llm logout [provider]` | Sign out of a subscription, or forget a service's API key |
+| `llm services` | Services that need only an API key, with how many models each has |
+| `llm status [--offline]` | Which providers work, including custom ones, which one renders use, and whether each login still works |
+| `llm models` | Every model renders can use, grouped by provider |
+| `llm use <provider>/<model>` | Choose the model renders use (`llm use <provider>` keeps that provider's model) |
+| `llm test [provider] [model]` | One request to a provider, with a given model or the one in use |
+| `llm provider add <id> --base-url <url> [...]` | Add or update any other endpoint; its models are fetched unless named with `--model` (see the [model setup guide](docs/model-services.md#3-any-other-endpoint-address-and-key)) |
+| `llm provider list` / `llm provider remove <id>` | List custom providers, with keys masked / remove one |
 | `bench init <figma link> [--size 12]` | Pick a fixed set of screens to benchmark |
 | `bench score --project <id> [--label <name>]` | Score the set and record the run |
 | `bench history` | Every recorded run |

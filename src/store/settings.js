@@ -36,9 +36,17 @@ export class Settings {
   }
   redacted() {
     const s = this.read();
+    // Custom model providers may carry an API key. Settings are served to the
+    // web page as-is otherwise, so every key is masked here, at the one exit.
+    const providers = {};
+    for (const [id, c] of Object.entries(s.llmProviders || {})) {
+      const { apiKey, ...rest } = c || {};
+      providers[id] = { ...rest, apiKeySet: Boolean(apiKey),
+        ...(apiKey ? { apiKey: apiKey.length > 8 ? apiKey.slice(0, 4) + "…" + apiKey.slice(-4) : "…" } : {}) };
+    }
     return { ...s, figmaToken: s.figmaToken
       ? s.figmaToken.slice(0, 4) + "…" + s.figmaToken.slice(-4) : "",
-      figmaTokenSet: !!s.figmaToken };
+      figmaTokenSet: !!s.figmaToken, llmProviders: providers };
   }
   token() {
     return this.read().figmaToken || process.env.FIGMA_API_KEY || "";

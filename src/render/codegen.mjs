@@ -427,6 +427,15 @@ export async function generate({ latest, target, provider, model, signal, onLog 
     signal,
   });
 
+  // Cut off at the token limit -- a reasoning model spends part of the budget
+  // thinking -- leaves a file that ends mid-expression. Say so; the top-up
+  // rounds below then ask again for what is missing.
+  const cut = (r, what) => {
+    if (r && r.stopReason === "length" && onLog) {
+      onLog(what + " was cut off at the model's output limit; the code may be incomplete");
+    }
+  };
+  cut(res, "the model's answer");
   const first = repair(stripFence(res.text), target);
 
   // Ask again for whatever was left out. The model omits items -- one screen
@@ -446,6 +455,7 @@ export async function generate({ latest, target, provider, model, signal, onLog 
         maxTokens: 48000,
         signal,
       });
+      cut(r, "a top-up answer");
       return repair(stripFence(r.text), target);
     },
   });

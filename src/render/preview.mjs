@@ -13,7 +13,7 @@ import { renderWeb, renderIos, score } from "./run.mjs";
 import { generateProject } from "./android.mjs";
 import { loadComponents } from "./web.mjs";
 import { trustStorePath } from "../env/truststore.mjs";
-import { isAuthorised, llmState } from "../llm/client.mjs";
+import { providerReady, llmState } from "../llm/client.mjs";
 import { stalenessNote } from "../ir/staleness.mjs";
 import { lensHome } from "../store/home.mjs";
 
@@ -145,7 +145,7 @@ async function runPlatform(platform, latest, projectDir, screenId, emit, opts = 
     const provider = opts.provider || state.provider;
     const model = opts.model || state.model;
     const useModel = opts.llm !== false
-      && (opts.provider ? isAuthorised(opts.provider) : state.ready);
+      && (opts.provider ? providerReady(opts.provider) : state.ready);
     if (opts.llm !== false && !useModel) {
       fellBack = (opts.provider ? opts.provider + " is not signed in" : state.message)
         + "; run: dsh-figma-design-lens-cat setup";

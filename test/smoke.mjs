@@ -24,7 +24,10 @@ await check("no undefined module references", () => {
     path.join(ROOT, "src", "mcp", "server.mjs"),
     path.join(ROOT, "src", "web", "server.mjs"),
     path.join(ROOT, "bin", "design-lens.mjs"),
-    path.join(ROOT, "src", "ir", "pipeline.mjs")], { stdio: "pipe" });
+    path.join(ROOT, "src", "ir", "pipeline.mjs"),
+    path.join(ROOT, "src", "llm", "client.mjs"),
+    path.join(ROOT, "src", "llm", "custom.mjs"),
+    path.join(ROOT, "src", "web", "llm-login.mjs")], { stdio: "pipe" });
 });
 // Anything that starts automatically must be switchable off from the same CLI.
 await check("service commands are wired", () => {
@@ -128,6 +131,70 @@ await check("mcp speaks protocol", () => {
   assert(tools && tools.result.tools.length >= 8, "expected >= 8 tools, got " + (tools ? tools.result.tools.length : 0));
   for (const t of tools.result.tools) {
     assert(t.description.startsWith("[dsh-figma-design-lens-cat]"), "tool " + t.name + " is not namespaced");
+  }
+});
+
+// A custom provider has to reach its own endpoint with its own key, be
+// choosable model by model, and never leave settings unmasked. An
+// OpenAI-compatible server on loopback stands in for the gateway.
+await check("custom model provider routes renders", async () => {
+  const client = await import(path.join(ROOT, "src", "llm", "client.mjs"));
+  if (!client.sdkInstalled()) return;   // the SDK is optional; nothing to route through
+  const http = await import("node:http");
+  const seen = [];
+  const srv = http.createServer((req, res) => {
+    // The listing "Fetch model list" reads; any key but the right one is refused.
+    if (req.url.endsWith("/models")) {
+      const ok = req.headers.authorization === "Bearer sk-smoke-1234567890";
+      res.writeHead(ok ? 200 : 401, { "content-type": "application/json" });
+      return res.end(ok ? JSON.stringify({ data: [{ id: "m2" }, { id: "m1" }, { id: "m1" }] }) : "{}");
+    }
+    let b = ""; req.on("data", (c) => b += c); req.on("end", () => {
+      const j = JSON.parse(b || "{}"); seen.push({ auth: req.headers.authorization, model: j.model });
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      const ch = (o) => res.write("data: " + JSON.stringify(o) + "\n\n");
+      ch({ id: "x", object: "chat.completion.chunk", created: 1, model: j.model,
+        choices: [{ index: 0, delta: { role: "assistant", content: "pong:" + j.model }, finish_reason: null }] });
+      ch({ id: "x", object: "chat.completion.chunk", created: 1, model: j.model,
+        choices: [{ index: 0, delta: {}, finish_reason: "stop" }] });
+      res.end("data: [DONE]\n\n");
+    });
+  });
+  await new Promise((r) => srv.listen(0, "127.0.0.1", r));
+  const prev = process.env.LENS_HOME;
+  process.env.LENS_HOME = path.join(HOME, "llm");
+  try {
+    const base = "http://127.0.0.1:" + srv.address().port + "/v1";
+    await client.saveCustomProvider({ id: "acme", api: "openai-completions", baseURL: base,
+      apiKey: "sk-smoke-1234567890", models: [{ id: "m1" }, { id: "m2", name: "Model Two" }] });
+    const { groups } = await client.listModelGroups();
+    const g = groups.find((x) => x.id === "acme");
+    assert(g && g.ready && g.models.length === 2, "custom provider is not listed as usable");
+    await client.chooseModel("acme", "m2");
+    assert.equal(client.llmState().message, "acme / m2");
+    const r = await client.complete({ provider: "acme", model: "m2", system: "s", prompt: "ping" });
+    assert.equal(r.text, "pong:m2");
+    assert.equal(seen[0].auth, "Bearer sk-smoke-1234567890");
+    await assert.rejects(client.chooseModel("acme", "nope"), /no model/);
+    await assert.rejects(client.saveCustomProvider({ id: "anthropic", baseURL: base, models: [{ id: "x" }] }), /built-in/);
+    const { Settings } = await import(path.join(ROOT, "src", "store", "settings.js"));
+    assert(!JSON.stringify(new Settings(process.env.LENS_HOME).redacted()).includes("sk-smoke-1234567890"),
+      "redacted settings expose the key");
+    // An endpoint lists its own models, and a provider needs no id typed.
+    const d = await client.discoverModels({ baseURL: base, apiKey: "sk-smoke-1234567890" });
+    assert.deepEqual(d.models.map((m) => m.id), ["m1", "m2"]);
+    await assert.rejects(client.discoverModels({ baseURL: base, apiKey: "wrong" }), /401/);
+    const auto = await client.saveCustomProvider({ displayName: "Smoke Gateway", baseURL: base, models: d.models });
+    assert.equal(auto.id, "smoke-gateway");
+    // A built-in service: its key alone makes its whole catalog choosable.
+    const k = await client.saveProviderKey("deepseek", "sk-smoke-deepseek");
+    assert.equal(client.llmState().provider, "deepseek");
+    assert(k.models > 0 && k.model, "no default model for the service");
+    assert(await client.removeProviderKey("deepseek"));
+    assert.notEqual(client.llmState().provider, "deepseek");
+  } finally {
+    srv.close();
+    if (prev === undefined) delete process.env.LENS_HOME; else process.env.LENS_HOME = prev;
   }
 });
 

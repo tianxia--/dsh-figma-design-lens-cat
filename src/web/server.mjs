@@ -140,6 +140,9 @@ export function createServer(root, opts = {}) {
         const client = await import("../llm/client.mjs");
         const LL = await import("./llm-login.mjs");
         const known = (pv) => LL.WEB_PROVIDERS.includes(pv);
+        // Sign-in is for the two subscriptions; test, use and models also take
+        // an API-key service with a saved key, or any custom provider.
+        const usable = (pv) => known(pv) || Boolean(client.customProviders()[pv]) || client.isAuthorised(pv);
 
         if (p === "/api/llm" && req.method === "GET") {
           const st = client.llmState();
@@ -150,7 +153,35 @@ export function createServer(root, opts = {}) {
               model: st.provider === id && st.model ? st.model : client.defaultModel(id),
             })),
             login: LL.view(LL.running("login")), install: LL.view(LL.running("install")),
+            // Every model renders can use, grouped by provider, and the one in use.
+            ...(await client.listModelGroups({ include: LL.WEB_PROVIDERS })),
+            custom: client.listCustomProviders(),
+            protocols: (await import("../llm/custom.mjs")).PROTOCOLS,
+            // Built-in services that need only an API key, for "Add a service".
+            services: await client.keyServices(),
           });
+        }
+        // A built-in service connected with its API key. The key goes to
+        // auth.json beside the subscription logins and is never sent back.
+        if (p === "/api/llm/key" && req.method === "POST") {
+          const b = await readBody();
+          try { return json(await client.saveProviderKey(String(b.provider || ""), b.apiKey)); }
+          catch (e) { return json({ error: e.message }, 400); }
+        }
+        if (p === "/api/llm/key/delete" && req.method === "POST") {
+          const b = await readBody();
+          const pv = String(b.provider || "");
+          // A subscription signs out instead; removing its entry here would
+          // drop the login without telling the provider.
+          if (client.PROVIDERS.some((x) => x.id === pv)) return json({ error: "sign out instead" }, 400);
+          return json({ ok: await client.removeProviderKey(pv) });
+        }
+        // Which models an endpoint serves, asked from here: the page cannot
+        // call another origin, and the key should not pass through it twice.
+        if (p === "/api/llm/discover" && req.method === "POST") {
+          const b = await readBody();
+          try { return json(await client.discoverModels(b || {})); }
+          catch (e) { return json({ error: e.message }, 400); }
         }
         if (p === "/api/llm/install" && req.method === "POST") {
           return json(LL.view(LL.startInstall(REPO)));
@@ -174,14 +205,28 @@ export function createServer(root, opts = {}) {
         }
         if (p === "/api/llm/test" && req.method === "POST") {
           const b = await readBody();
-          if (!known(b.provider)) return json({ error: "unknown provider" }, 400);
-          return json(await client.checkProvider(b.provider));
+          if (!usable(b.provider)) return json({ error: "unknown provider" }, 400);
+          return json(await client.checkProvider(b.provider, b.model || undefined));
         }
         if (p === "/api/llm/use" && req.method === "POST") {
           const b = await readBody();
-          if (!known(b.provider)) return json({ error: "unknown provider" }, 400);
-          if (!client.isAuthorised(b.provider)) return json({ error: "not signed in" }, 400);
-          return json(client.chooseProvider(b.provider));
+          if (!usable(b.provider)) return json({ error: "unknown provider" }, 400);
+          try {
+            return json(b.model ? await client.chooseModel(b.provider, b.model)
+              : (client.providerReady(b.provider) ? client.chooseProvider(b.provider)
+                : (() => { throw new Error("not signed in"); })()));
+          } catch (e) { return json({ error: e.message }, 400); }
+        }
+        // Custom providers. Keys are written to settings.json (mode 600) and
+        // only ever come back masked.
+        if (p === "/api/llm/custom" && req.method === "POST") {
+          const b = await readBody();
+          try { return json(await client.saveCustomProvider(b || {})); }
+          catch (e) { return json({ error: e.message }, 400); }
+        }
+        if (p === "/api/llm/custom/delete" && req.method === "POST") {
+          const b = await readBody();
+          return json({ ok: client.removeCustomProvider(String((b && b.id) || "")) });
         }
         if (p === "/api/llm/logout" && req.method === "POST") {
           const b = await readBody();
