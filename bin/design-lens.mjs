@@ -182,6 +182,15 @@ function useProvider(provider) {
 
 
 const main = async () => {
+  // The MCP server, reachable through the package's main command. Clients
+  // that install from an MCP directory run `npx <package> <args>`, which
+  // starts this file, not bin/mcp.mjs. Nothing may be printed first: stdout
+  // carries the protocol.
+  if (cmd === "mcp") {
+    await import("../src/mcp/server.mjs");
+    return;
+  }
+
   if (cmd === "add" || cmd === "analyze") {
     const url = args[1];
     if (!url) throw new Error('usage: dsh-figma-design-lens-cat add "<figma url>" [--project <label>] [--detectors]');
@@ -1025,6 +1034,7 @@ const main = async () => {
   console.log("  dsh-figma-design-lens-cat service uninstall  remove it completely");
   console.log("  dsh-figma-design-lens-cat service logs       last 40 log lines");
   console.log("  dsh-figma-design-lens-cat install-mcp [--client claude|codex|json]");
+  console.log("  dsh-figma-design-lens-cat mcp                       run the MCP server on stdio (for npx-based clients)");
   console.log();
   console.log("  (short alias: dlc)");
   console.log("store: " + LENS_HOME);

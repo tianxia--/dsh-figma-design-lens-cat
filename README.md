@@ -240,6 +240,23 @@ dsh-figma-design-lens-cat install-mcp --client json
 }
 ```
 
+Without installing anything first, a client can run it through `npx`. This
+is also how MCP directories list it:
+
+```json
+{
+  "mcpServers": {
+    "dsh-figma-design-lens-cat": {
+      "command": "npx",
+      "args": ["-y", "dsh-figma-design-lens-cat", "mcp"],
+      "env": { "FIGMA_API_KEY": "your-figma-token" }
+    }
+  }
+}
+```
+
+`FIGMA_API_KEY` is optional once a token is saved with `dsh-figma-design-lens-cat token`.
+
 Eight tools: `analyze_design`, `list_projects`, `list_screens`,
 `get_screen`, `get_implementation_spec`, `get_components`, `get_assets`,
 `open_review`.
@@ -375,6 +392,7 @@ Short alias for every command: `dlc`.
 | `install` | List the MCP clients found on this machine |
 | `install <client>` / `install all` | Wire the MCP server into `claude`, `claude-desktop`, `cursor`, `codex`, `workbuddy`, or all found |
 | `install-mcp [--client claude\|codex\|json]` | Print the config entry instead of writing it |
+| `mcp` | Run the MCP server on stdio (what `npx dsh-figma-design-lens-cat mcp` starts) |
 
 **Code generation and benchmarks**
 
