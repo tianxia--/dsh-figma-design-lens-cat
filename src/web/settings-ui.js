@@ -73,8 +73,11 @@ export function settingsCards(t) {
     "</div>",
     '<div id="llm-login" class="lm-panel" hidden>',
     '  <div id="llm-login-msg" class="lm-msg"></div>',
-    '  <div id="llm-login-link" class="hint" hidden><a target="_blank" rel="noopener" id="llm-login-a">'
-      + esc(t("settings.llm.openLink")) + "</a></div>",
+    // A real link the user clicks: opening a blank tab first and pointing it
+    // at the sign-in page later left it blank in some browsers.
+    '  <div id="llm-login-link" class="lm-go" hidden><a target="_blank" rel="noopener" id="llm-login-a" class="lm-go-btn">'
+      + esc(t("settings.llm.openAuth")) + ' ↗</a><button class="ghost" id="llm-login-copy">' + esc(t("settings.llm.copyLink")) + "</button>"
+      + '<div class="hint" style="margin:6px 0 0">' + esc(t("settings.llm.copyHint")) + "</div></div>",
     '  <div id="llm-paste" hidden style="margin-top:10px">',
     '    <div class="hint" style="margin:0 0 6px">' + esc(t("settings.llm.paste")) + "</div>",
     '    <div style="display:flex;gap:8px"><input id="llm-code" autocomplete="off" spellcheck="false">',
@@ -103,6 +106,11 @@ export function settingsCards(t) {
     ".lm-act button,.lm-sdk button{padding:5px 11px;font-size:var(--t-sm)}",
     ".lm-panel{margin-top:12px;padding:12px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--surface-2)}",
     ".lm-msg{font-size:var(--t-sm)}",
+    ".lm-go{margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}",
+    ".lm-go .hint{flex-basis:100%}",
+    ".lm-go-btn{display:inline-block;padding:8px 16px;border-radius:var(--r-md);background:var(--ink);color:var(--surface);font-weight:600;font-size:var(--t-sm);text-decoration:none}",
+    ".lm-go-btn:hover{opacity:.9}",
+    ".lm-go button{padding:7px 12px;font-size:var(--t-sm)}",
     ".lm-sdk{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 12px;margin-bottom:8px;border-radius:var(--r-md);background:var(--warn-weak)}",
     ".lm-log{font:12px/1.5 ui-monospace,Menlo,monospace;color:var(--ink-3);white-space:pre-wrap;margin-top:6px;max-height:140px;overflow:auto}",
     ".dc-row{display:grid;grid-template-columns:150px 64px 1fr;gap:10px;padding:8px 0;border-top:1px solid var(--line);font-size:var(--t-sm);align-items:start}",
@@ -152,6 +160,7 @@ export function settingsScript(t) {
     testing: t("settings.llm.testing"), ok: t("settings.llm.ok"),
     expired: t("settings.llm.expired"), error: t("settings.llm.error"),
     starting: t("settings.llm.starting"), waiting: t("settings.llm.waiting"),
+    copyLink: t("settings.llm.copyLink"), copied: t("settings.llm.copied"),
     done: t("settings.llm.done"), failed: t("settings.llm.failed"), cancelled: t("settings.llm.cancelled"),
     sdkMissing: t("settings.llm.sdkMissing"), install: t("settings.llm.install"),
     installing: t("settings.llm.installing"), installFailed: t("settings.llm.installFailed"),
@@ -221,7 +230,7 @@ async function runDoctor(){
 }
 
 /* ---- model sign-in ---- */
-var state=null,poll=null,popup=null,opened=null;
+var state=null,poll=null;
 async function loadLlm(){
   state=await api('/api/llm');
   if(state.error){$('llm-list').textContent=state.error;return;}
@@ -270,12 +279,8 @@ async function act(a,p){
   }
 }
 async function login(p){
-  /* Open the tab inside the click: a window opened after an await is
-     treated as a popup and blocked. Its address is set once the server
-     has the authorisation URL. */
-  popup=window.open('about:blank','_blank');opened=null;
   var r=await api('/api/llm/login',{provider:p});
-  if(r.error){if(popup)popup.close();toast(r.error);return;}
+  if(r.error){toast(r.error);return;}
   follow(r.id);
 }
 function follow(id){
@@ -292,14 +297,17 @@ function follow(id){
     if(s.error){stop();return;}
     if(s.authUrl){
       $('llm-login-a').href=s.authUrl;$('llm-login-link').hidden=false;
-      if(opened!==s.authUrl){opened=s.authUrl;if(popup&&!popup.closed)popup.location=s.authUrl;}
+      $('llm-login-copy').onclick=function(){
+        var done=function(){toast(L.copied);};
+        if(navigator.clipboard)navigator.clipboard.writeText(s.authUrl).then(done,function(){window.prompt(L.copyLink,s.authUrl);});
+        else window.prompt(L.copyLink,s.authUrl);
+      };
     }
     $('llm-paste').hidden=!s.prompt;
     if(s.status==='running'){$('llm-login-msg').textContent=s.authUrl?L.waiting:L.starting;return;}
     stop();
     if(s.status==='done'){toast(fmt(L.done,s.model||''));$('llm-login').hidden=true;}
     else{
-      if(popup&&!popup.closed&&s.status==='cancelled')popup.close();
       $('llm-login-msg').innerHTML=pill('bad',s.status==='cancelled'?L.cancelled:L.failed)
         +(s.error?' <span class="muted">'+esc(s.error)+'</span>':'');
       $('llm-paste').hidden=true;$('llm-login-link').hidden=true;

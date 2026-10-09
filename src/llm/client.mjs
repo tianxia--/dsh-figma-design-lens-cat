@@ -247,12 +247,47 @@ export async function builtinProviderIds() {
  */
 export async function login(provider, io) {
   const m = await models();
-  await m.login(provider, "oauth", {
-    prompt: async (p) => io.prompt(p),
-    notify: (e) => io.notify(e),
-    ...(io.signal ? { signal: io.signal } : {}),
-  });
+  const bridge = await ipv6CallbackBridge(provider);
+  try {
+    await m.login(provider, "oauth", {
+      prompt: async (p) => io.prompt(p),
+      notify: (e) => io.notify(e),
+      ...(io.signal ? { signal: io.signal } : {}),
+    });
+  } finally {
+    if (bridge) bridge.close();
+  }
   return { ok: true, provider, stored: authFile() };
+}
+
+// The port each provider's sign-in redirects back to, on localhost.
+const CALLBACK_PORTS = { "openai-codex": 1455, anthropic: 53692 };
+
+/**
+ * Let the browser's redirect arrive over IPv6 too.
+ *
+ * The provider sends the browser to http://localhost:<port>/..., while the
+ * SDK's callback listens on 127.0.0.1 only. Where localhost resolves to ::1
+ * first, a browser that does not fall back to IPv4 is refused: the sign-in
+ * completed in the browser, the code sat in its address bar, and nothing
+ * here received it. For the length of the sign-in, ::1 on the same port is
+ * forwarded to 127.0.0.1. Returns the server to close, or null if it could
+ * not listen (no IPv6, or the port taken) -- the IPv4 path still works then.
+ */
+async function ipv6CallbackBridge(provider) {
+  const port = CALLBACK_PORTS[provider];
+  if (!port || process.env.PI_OAUTH_CALLBACK_HOST) return null;
+  const net = await import("node:net");
+  return new Promise((resolve) => {
+    const srv = net.createServer((sock) => {
+      const up = net.connect(port, "127.0.0.1");
+      const end = () => { sock.destroy(); up.destroy(); };
+      sock.on("error", end); up.on("error", end);
+      sock.pipe(up).pipe(sock);
+    });
+    srv.once("error", () => resolve(null));
+    srv.listen(port, "::1", () => resolve(srv));
+  });
 }
 
 /** Make a provider the one renders use, keeping a model chosen for it before. */

@@ -34,16 +34,19 @@ gateway.
 For Claude (Claude Pro / Max) or Codex (ChatGPT Plus / Pro):
 
 1. Press **Sign in** next to Claude or Codex.
-2. The provider's sign-in page opens in a new tab. Approve it there.
+2. Press **Go to the sign-in page**. The provider's sign-in page opens in a
+   new tab; approve it there.
 3. The browser returns to this machine by itself and the card updates to
    **Signed in · Used for renders**.
 
 ![Signing in to Codex](images/models-signin.en.png)
 
-If no tab opened, use **No new tab? Open the sign-in page**. If the browser
-could not return here by itself -- signing in from another machine, say --
-paste the code or the full address it ended on into the box and press
-**Submit**. **Cancel** stops the sign-in at any point.
+If the sign-in page stays blank or stuck on a security check, a company proxy
+is likely blocking it: press **Copy link** and open it in another browser on
+this machine, or try another network. If the browser could not return here by
+itself -- signing in from another machine, say -- paste the code or the full
+address it ended on into the box and press **Submit**. **Cancel** stops the
+sign-in at any point.
 
 ```bash
 dsh-figma-design-lens-cat llm login anthropic      # or openai-codex
